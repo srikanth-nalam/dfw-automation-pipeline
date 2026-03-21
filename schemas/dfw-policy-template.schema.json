@@ -1,104 +1,205 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "dfw-policy-template",
+  "$id": "https://company.com/schemas/dfw-automation/dfw-policy-template.schema.json",
   "title": "DFW Policy Template Schema",
-  "description": "Validates DFW policy-as-code YAML/JSON definitions for NSX Distributed Firewall rules",
+  "description": "Validates DFW policy-as-code YAML/JSON definitions for NSX Distributed Firewall rules. Used by PolicyDeployer.js to validate policy structure before deploying to NSX-T, and by the CI pipeline (validate-policies) to enforce policy correctness at build time.",
   "type": "object",
   "required": ["policy_name", "display_name", "nsx_category", "scope", "priority", "rules"],
   "properties": {
     "policy_name": {
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]+$",
-      "description": "Unique policy identifier (alphanumeric, hyphens, underscores)"
+      "minLength": 1,
+      "maxLength": 255,
+      "description": "Unique policy identifier (alphanumeric, hyphens, underscores). Used as the NSX-T policy ID.",
+      "examples": ["APP001-Application-Policy", "infrastructure-shared-services"]
     },
     "display_name": {
       "type": "string",
       "minLength": 1,
-      "description": "Human-readable policy name"
+      "maxLength": 255,
+      "description": "Human-readable policy name displayed in the NSX Manager UI.",
+      "examples": ["APP001 Application Tier Policy", "Infrastructure Shared Services"]
     },
     "nsx_category": {
       "type": "string",
-      "enum": ["Infrastructure", "Environment", "Application", "Emergency"],
-      "description": "NSX DFW policy category"
+      "enum": ["Emergency", "Infrastructure", "Environment", "Application"],
+      "description": "NSX DFW policy category. Determines processing order: Emergency > Infrastructure > Environment > Application.",
+      "examples": ["Application"]
     },
     "scope": {
       "type": "string",
       "pattern": "^(GLOBAL|LOCAL:(NDCNG|TULNG))$",
-      "description": "Policy scope - GLOBAL or LOCAL:{site}"
+      "description": "Policy scope. GLOBAL applies to both sites via NSX Federation. LOCAL:{site} applies only to the specified site's NSX Manager.",
+      "examples": ["GLOBAL", "LOCAL:NDCNG"]
     },
     "priority": {
       "type": "integer",
       "minimum": 1,
       "maximum": 10000,
-      "description": "Policy priority (lower = higher precedence)"
+      "description": "Policy priority within its category. Lower values = higher precedence. Emergency policies should use 1-100, Infrastructure 101-1000, Environment 1001-5000, Application 5001-10000.",
+      "examples": [5001]
     },
     "description": {
       "type": "string",
-      "description": "Optional policy description"
+      "maxLength": 2000,
+      "description": "Optional policy description. Included in NSX-T policy metadata for documentation.",
+      "examples": ["Three-tier application firewall rules for APP001 (Web -> Application -> Database)"]
+    },
+    "tags": {
+      "type": "array",
+      "description": "Optional NSX-T tags applied to the policy itself for organizational purposes.",
+      "items": {
+        "type": "object",
+        "required": ["scope", "tag"],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "description": "NSX-T tag scope.",
+            "examples": ["ManagedBy"]
+          },
+          "tag": {
+            "type": "string",
+            "description": "NSX-T tag value.",
+            "examples": ["DFW-Automation"]
+          }
+        },
+        "additionalProperties": false
+      },
+      "examples": [[{"scope": "ManagedBy", "tag": "DFW-Automation"}]]
+    },
+    "applied_to": {
+      "type": "array",
+      "description": "Groups to which this policy is applied. If omitted, the policy applies based on rule-level source/destination groups. Use for policy scoping to limit DFW rule evaluation overhead.",
+      "items": {
+        "type": "string",
+        "description": "NSX-T group path or identifier.",
+        "examples": ["/infra/domains/default/groups/APP001_All"]
+      }
+    },
+    "locked": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the policy is locked from manual edits in the NSX Manager UI. Automation-managed policies should be locked to prevent drift."
     },
     "rules": {
       "type": "array",
       "minItems": 1,
+      "description": "Ordered list of DFW rules within this policy. Rules are evaluated top-to-bottom within the policy.",
       "items": {
-        "type": "object",
-        "required": ["name", "display_name", "source_groups", "destination_groups", "services", "action", "direction"],
-        "properties": {
-          "name": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9_-]+$",
-            "description": "Unique rule identifier within the policy"
-          },
-          "display_name": {
-            "type": "string",
-            "description": "Human-readable rule name"
-          },
-          "source_groups": {
-            "type": "array",
-            "items": { "type": "string" },
-            "minItems": 1,
-            "description": "Source security groups or ANY"
-          },
-          "destination_groups": {
-            "type": "array",
-            "items": { "type": "string" },
-            "minItems": 1,
-            "description": "Destination security groups or ANY"
-          },
-          "services": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "pattern": "^(ANY|ICMP|(TCP|UDP)/[0-9]+)$"
-            },
-            "minItems": 1,
-            "description": "Service definitions (protocol/port or ANY)"
-          },
-          "action": {
-            "type": "string",
-            "enum": ["ALLOW", "DROP", "REJECT"],
-            "description": "Rule action"
-          },
-          "direction": {
-            "type": "string",
-            "enum": ["IN", "OUT", "IN_OUT"],
-            "description": "Traffic direction"
-          },
-          "logged": {
-            "type": "boolean",
-            "default": false,
-            "description": "Whether rule hits are logged"
-          },
-          "disabled": {
-            "type": "boolean",
-            "default": false,
-            "description": "Whether the rule is disabled"
-          },
-          "notes": {
-            "type": "string",
-            "description": "Documentation notes for the rule"
-          }
-        }
+        "$ref": "#/definitions/dfwRule"
       }
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "dfwRule": {
+      "type": "object",
+      "required": ["name", "display_name", "source_groups", "destination_groups", "services", "action", "direction"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Unique rule identifier within the policy. Used as the NSX-T rule ID.",
+          "examples": ["allow-web-to-app-https"]
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "description": "Human-readable rule name displayed in the NSX Manager UI.",
+          "examples": ["Allow Web to App HTTPS"]
+        },
+        "source_groups": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "NSX-T group path, IP set path, or 'ANY' for all sources."
+          },
+          "minItems": 1,
+          "description": "Source security groups, IP sets, or 'ANY'. References NSX-T group paths.",
+          "examples": [["/infra/domains/default/groups/APP001_Web_Production"]]
+        },
+        "destination_groups": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "description": "NSX-T group path, IP set path, or 'ANY' for all destinations."
+          },
+          "minItems": 1,
+          "description": "Destination security groups, IP sets, or 'ANY'. References NSX-T group paths.",
+          "examples": [["/infra/domains/default/groups/APP001_App_Production"]]
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(ANY|ICMP|ICMPv6|(TCP|UDP)/[0-9]+(-[0-9]+)?|/infra/services/.+)$",
+            "description": "Service definition: protocol/port, port range, NSX-T service path, or 'ANY'."
+          },
+          "minItems": 1,
+          "description": "Service definitions. Supports protocol/port (TCP/443), port ranges (TCP/8080-8090), named services (/infra/services/...), ICMP, or ANY.",
+          "examples": [["TCP/443", "TCP/8443"]]
+        },
+        "action": {
+          "type": "string",
+          "enum": ["ALLOW", "DROP", "REJECT"],
+          "description": "Rule action. ALLOW permits traffic, DROP silently discards, REJECT discards with ICMP unreachable.",
+          "examples": ["ALLOW"]
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["IN", "OUT", "IN_OUT"],
+          "description": "Traffic direction. IN = ingress to destination, OUT = egress from source, IN_OUT = bidirectional.",
+          "examples": ["IN_OUT"]
+        },
+        "ip_protocol": {
+          "type": "string",
+          "enum": ["IPV4", "IPV6", "IPV4_IPV6"],
+          "default": "IPV4_IPV6",
+          "description": "IP protocol version filter for the rule."
+        },
+        "logged": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether rule hits are logged to the syslog server. Enable for audit-sensitive rules (compliance, quarantine).",
+          "examples": [true]
+        },
+        "disabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the rule is disabled. Disabled rules remain in the policy but are not enforced. Useful for staging rules before activation.",
+          "examples": [false]
+        },
+        "sequence_number": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Explicit rule ordering within the policy. Lower values are evaluated first. If omitted, rules are ordered by array position.",
+          "examples": [10]
+        },
+        "tag": {
+          "type": "string",
+          "maxLength": 255,
+          "description": "Optional rule-level tag for grouping and filtering in NSX Manager.",
+          "examples": ["auto-generated"]
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 2000,
+          "description": "Documentation notes for the rule. Included in policy audit reports.",
+          "examples": ["Allows HTTPS traffic from web tier to application tier per FR-SEC-001"]
+        },
+        "scope": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Rule-level scope to further restrict which groups this rule applies to, beyond the policy-level applied_to."
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

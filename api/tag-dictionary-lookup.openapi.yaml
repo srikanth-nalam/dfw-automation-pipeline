@@ -8,8 +8,14 @@ info:
     CRUD API for managing the Enterprise Tag Dictionary in ServiceNow.
     The Tag Dictionary is the authoritative source of truth for all NSX-T
     tag categories and values used by the DFW automation pipeline. vRO
-    workflows consult this API during Day 0/Day 2 operations to validate
-    tag assignments before applying them to VMs.
+    workflows consult this API during Day 0/Day 2/Day N operations to
+    validate tag assignments before applying them to VMs.
+
+    This API is consumed by:
+      - PayloadValidator.js (vRO) for tag validation during workflow execution
+      - tagFieldServerValidation.js (ServiceNow) for before-insert business rule checks
+      - tagDictionaryLookup.js (ServiceNow) for catalog item form population
+      - RuleConflictDetector.js (vRO) for dynamic conflict rule evaluation
   contact:
     name: "Platform Automation Team"
     email: "platform-automation@company.com"
@@ -21,13 +27,17 @@ servers:
     description: "Production ServiceNow instance"
   - url: "https://snow-preprod.company.com"
     description: "Pre-Production ServiceNow instance"
+  - url: "https://snow-dev.company.com"
+    description: "Development ServiceNow instance"
 
 security:
   - bearerAuth: []
 
 tags:
   - name: "Tag Dictionary"
-    description: "Enterprise Tag Dictionary management"
+    description: "Enterprise Tag Dictionary management — CRUD operations for tag categories and values"
+  - name: "Tag Validation"
+    description: "Tag validation and conflict checking endpoints"
 
 paths:
   # ==========================================================================
@@ -39,8 +49,8 @@ paths:
       summary: "List Tag Values by Category"
       description: >
         Returns all tag values registered under the specified category.
-        Supports filtering by active status and pagination. Results are
-        sorted alphabetically by value.
+        Supports filtering by active status, site applicability, and
+        pagination. Results are sorted alphabetically by value.
       tags:
         - "Tag Dictionary"
       parameters:
@@ -61,10 +71,26 @@ paths:
         - name: isActive
           in: query
           required: false
-          description: "Filter by active status. Omit to return all."
+          description: "Filter by active status. Omit to return all entries."
           schema:
             type: boolean
           example: true
+        - name: site
+          in: query
+          required: false
+          description: "Filter by site applicability. Returns values applicable to the specified site."
+          schema:
+            type: string
+            enum: ["NDCNG", "TULNG"]
+          example: "NDCNG"
+        - name: environment
+          in: query
+          required: false
+          description: "Filter by environment applicability. Returns values applicable to the specified environment."
+          schema:
+            type: string
+            enum: ["Production", "Pre-Production", "UAT", "Staging", "Development", "Sandbox", "DR"]
+          example: "Production"
         - name: limit
           in: query
           required: false
@@ -101,44 +127,53 @@ paths:
                     description: "Business logic servers, API gateways, and middleware"
                     nsxTagKey: "Tier"
                     isActive: true
+                    cardinality: "SINGLE"
                     createdAt: "2025-01-15T10:00:00.000Z"
                     updatedAt: "2026-01-10T08:00:00.000Z"
                   - value: "Database"
                     description: "Relational databases, NoSQL stores, and data warehouses"
                     nsxTagKey: "Tier"
                     isActive: true
+                    cardinality: "SINGLE"
                     createdAt: "2025-01-15T10:00:00.000Z"
                     updatedAt: "2026-01-10T08:00:00.000Z"
                   - value: "Middleware"
                     description: "Message queues, ESBs, and integration platforms"
                     nsxTagKey: "Tier"
                     isActive: true
+                    cardinality: "SINGLE"
                     createdAt: "2025-01-15T10:00:00.000Z"
                     updatedAt: "2026-01-10T08:00:00.000Z"
                   - value: "Shared-Services"
                     description: "Cross-cutting services: DNS, NTP, LDAP, monitoring, backup"
                     nsxTagKey: "Tier"
                     isActive: true
+                    cardinality: "SINGLE"
                     createdAt: "2025-01-15T10:00:00.000Z"
                     updatedAt: "2026-01-10T08:00:00.000Z"
                   - value: "Utility"
                     description: "Infrastructure utilities: jump hosts, bastion servers"
                     nsxTagKey: "Tier"
                     isActive: true
+                    cardinality: "SINGLE"
                     createdAt: "2025-01-15T10:00:00.000Z"
                     updatedAt: "2026-01-10T08:00:00.000Z"
                   - value: "Web"
                     description: "Front-end web servers, reverse proxies, static content"
                     nsxTagKey: "Tier"
                     isActive: true
+                    cardinality: "SINGLE"
                     createdAt: "2025-01-15T10:00:00.000Z"
                     updatedAt: "2026-01-10T08:00:00.000Z"
         "401":
-          description: "Unauthorized."
+          description: "Unauthorized — missing or invalid bearer token."
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "UNAUTHORIZED"
+                errorMessage: "Bearer token is missing or invalid"
         "404":
           description: "Category not found."
           content:
@@ -150,7 +185,7 @@ paths:
                 errorMessage: "Tag category 'InvalidCategory' does not exist"
 
   # ==========================================================================
-  # Get Metadata for a Specific Value
+  # Get / Update / Deactivate a Specific Value
   # ==========================================================================
   /api/now/v1/tag-dictionary/{category}/{value}:
     get:
@@ -159,7 +194,7 @@ paths:
       description: >
         Returns the full metadata for a specific tag value within a
         category, including description, applicability constraints,
-        approval requirements, and audit trail.
+        approval requirements, conflict rules, and audit trail.
       tags:
         - "Tag Dictionary"
       parameters:
@@ -190,6 +225,7 @@ paths:
                 nsxTagKey: "Environment"
                 description: "Live production workloads serving end users"
                 isActive: true
+                cardinality: "SINGLE"
                 applicableEnvironments: []
                 applicableTiers:
                   - "Web"
@@ -198,6 +234,8 @@ paths:
                   - "Middleware"
                   - "Utility"
                   - "Shared-Services"
+                applicableSites: ["NDCNG", "TULNG"]
+                conflictsWith: []
                 requiresApproval: false
                 approverRole: null
                 createdAt: "2025-01-15T10:00:00.000Z"
@@ -229,7 +267,8 @@ paths:
       description: >
         Partially updates the metadata of an existing tag dictionary
         entry. Only provided fields are updated; omitted fields retain
-        their current values.
+        their current values. Triggers re-validation of any active VMs
+        using this tag value if applicability constraints change.
       tags:
         - "Tag Dictionary"
       parameters:
@@ -249,7 +288,7 @@ paths:
           example: "Production"
       requestBody:
         required: true
-        description: "Fields to update."
+        description: "Fields to update. Only provided fields are modified."
         content:
           application/json:
             schema:
@@ -271,6 +310,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "VALIDATION_FAILED"
+                errorMessage: "Field 'approverRole' is required when 'requiresApproval' is true"
         "401":
           description: "Unauthorized."
           content:
@@ -295,6 +337,7 @@ paths:
         Deactivated values are no longer valid for new tag assignments but
         remain in the dictionary for historical reference. VMs with the
         deactivated tag are flagged by the compliance drift scanner.
+        Returns 409 if active VMs are still using the tag value.
       tags:
         - "Tag Dictionary"
       parameters:
@@ -312,6 +355,13 @@ paths:
           schema:
             type: string
           example: "Sandbox"
+        - name: force
+          in: query
+          required: false
+          description: "Force deactivation even if VMs are still using this tag. Requires 'tag-dictionary:admin' scope."
+          schema:
+            type: boolean
+            default: false
       responses:
         "200":
           description: "Tag value deactivated."
@@ -342,7 +392,8 @@ paths:
         "409":
           description: >
             Conflict — active VMs are still using this tag value.
-            Deactivation is blocked until all VMs are re-tagged.
+            Deactivation is blocked until all VMs are re-tagged, or
+            use force=true with 'tag-dictionary:admin' scope.
           content:
             application/json:
               schema:
@@ -387,6 +438,7 @@ paths:
                     - "Web"
                     - "Application"
                     - "Database"
+                  applicableSites: ["NDCNG", "TULNG"]
                   requiresApproval: false
               new-application:
                 summary: "Register a new application code"
@@ -405,7 +457,23 @@ paths:
                     - "Web"
                     - "Application"
                     - "Database"
+                  applicableSites: ["NDCNG", "TULNG"]
                   requiresApproval: false
+              new-compliance:
+                summary: "Register a new compliance framework"
+                value:
+                  category: "Compliance"
+                  value: "FedRAMP"
+                  nsxTagKey: "Compliance"
+                  description: "Federal Risk and Authorization Management Program"
+                  isActive: true
+                  applicableEnvironments:
+                    - "Production"
+                    - "Pre-Production"
+                  applicableTiers: []
+                  applicableSites: ["NDCNG"]
+                  requiresApproval: true
+                  approverRole: "Federal Compliance Officer"
       responses:
         "201":
           description: "Tag dictionary entry created."
@@ -438,6 +506,107 @@ paths:
                 errorCode: "DUPLICATE_VALUE"
                 errorMessage: "Tag value 'Production' already exists in category 'Environment'"
 
+  # ==========================================================================
+  # Validate Tag Combinations
+  # ==========================================================================
+  /api/now/v1/tag-dictionary/validate:
+    post:
+      operationId: "validateTagCombination"
+      summary: "Validate Tag Combination"
+      description: >
+        Validates a proposed set of tag assignments against the Enterprise
+        Tag Dictionary rules including: existence checks, cardinality
+        enforcement, applicability constraints, and conflict detection.
+        Used by vRO PayloadValidator.js during workflow execution and by
+        catalogItemValidation.js during RITM submission.
+      tags:
+        - "Tag Validation"
+      requestBody:
+        required: true
+        description: "Proposed tag assignments to validate."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagValidationRequest"
+            example:
+              tags:
+                Application: "APP001"
+                Tier: "Web"
+                Environment: "Production"
+                Compliance: ["PCI", "SOX"]
+                DataClassification: "Confidential"
+              site: "NDCNG"
+      responses:
+        "200":
+          description: "Validation result."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagValidationResponse"
+              examples:
+                valid:
+                  summary: "All tags valid"
+                  value:
+                    valid: true
+                    errors: []
+                    warnings: []
+                invalid:
+                  summary: "PCI in Sandbox conflict"
+                  value:
+                    valid: false
+                    errors:
+                      - code: "DFW-4003"
+                        field: "compliance"
+                        message: "PCI workloads cannot be placed in Sandbox environment"
+                    warnings: []
+        "400":
+          description: "Invalid validation request."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  # ==========================================================================
+  # List Conflict Rules
+  # ==========================================================================
+  /api/now/v1/tag-dictionary/conflict-rules:
+    get:
+      operationId: "listConflictRules"
+      summary: "List Tag Conflict Rules"
+      description: >
+        Returns all active tag conflict rules from the u_tag_conflict_rules
+        table. These rules define mutually exclusive tag value combinations
+        that are enforced during tag assignment validation.
+      tags:
+        - "Tag Validation"
+      parameters:
+        - name: isActive
+          in: query
+          required: false
+          description: "Filter by active status."
+          schema:
+            type: boolean
+          example: true
+      responses:
+        "200":
+          description: "List of conflict rules."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConflictRuleListResponse"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -445,13 +614,14 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: >
-        JWT bearer token with 'tag-dictionary:read' scope for GET
-        operations and 'tag-dictionary:write' scope for POST, PATCH,
-        and DELETE operations.
+        JWT bearer token. Required scopes:
+          - 'tag-dictionary:read' for GET operations
+          - 'tag-dictionary:write' for POST and PATCH operations
+          - 'tag-dictionary:admin' for DELETE and force operations
 
   schemas:
     # ========================================================================
-    # Tag Dictionary Entry (Full)
+    # Tag Dictionary Entry (Full Response)
     # ========================================================================
     TagDictionaryEntry:
       type: object
@@ -489,12 +659,16 @@ components:
             Whether this tag value is currently active and available for
             new assignments. Deactivated values are retained for history.
           example: true
+        cardinality:
+          type: string
+          description: "Tag cardinality for this category (SINGLE or MULTI)."
+          enum: ["SINGLE", "MULTI"]
+          example: "SINGLE"
         applicableEnvironments:
           type: array
           description: >
             Environments where this tag value may be used. Empty array
-            means all environments. Primarily used to restrict Application
-            and Compliance tags to specific environments.
+            means all environments.
           items:
             type: string
           example:
@@ -511,6 +685,29 @@ components:
             - "Web"
             - "Application"
             - "Database"
+        applicableSites:
+          type: array
+          description: >
+            Sites where this tag value may be used. Empty array means
+            all sites.
+          items:
+            type: string
+            enum: ["NDCNG", "TULNG"]
+          example:
+            - "NDCNG"
+            - "TULNG"
+        conflictsWith:
+          type: array
+          description: "Tag values that conflict with this entry."
+          items:
+            type: object
+            properties:
+              category:
+                type: string
+              value:
+                type: string
+              reason:
+                type: string
         requiresApproval:
           type: boolean
           description: >
@@ -521,6 +718,15 @@ components:
           type: string
           description: "Role required to approve assignment of this tag value."
           example: "Compliance Officer"
+          nullable: true
+        retirementDate:
+          type: string
+          format: date
+          description: "Planned retirement date for this tag value."
+          nullable: true
+        replacedBy:
+          type: string
+          description: "Replacement tag value if this entry is being retired."
           nullable: true
         createdAt:
           type: string
@@ -586,15 +792,22 @@ components:
           default: true
         applicableEnvironments:
           type: array
-          description: "Limit usage to specific environments."
+          description: "Limit usage to specific environments. Empty = all."
           items:
             type: string
           default: []
         applicableTiers:
           type: array
-          description: "Limit usage to specific tiers."
+          description: "Limit usage to specific tiers. Empty = all."
           items:
             type: string
+          default: []
+        applicableSites:
+          type: array
+          description: "Limit usage to specific sites. Empty = all."
+          items:
+            type: string
+            enum: ["NDCNG", "TULNG"]
           default: []
         requiresApproval:
           type: boolean
@@ -629,12 +842,27 @@ components:
           description: "Update tier applicability."
           items:
             type: string
+        applicableSites:
+          type: array
+          description: "Update site applicability."
+          items:
+            type: string
+            enum: ["NDCNG", "TULNG"]
         requiresApproval:
           type: boolean
           description: "Update approval requirement."
         approverRole:
           type: string
           description: "Update approver role."
+          nullable: true
+        retirementDate:
+          type: string
+          format: date
+          description: "Set or update planned retirement date."
+          nullable: true
+        replacedBy:
+          type: string
+          description: "Set or update replacement tag value."
           nullable: true
 
     # ========================================================================
@@ -686,12 +914,155 @@ components:
               isActive:
                 type: boolean
                 example: true
+              cardinality:
+                type: string
+                enum: ["SINGLE", "MULTI"]
+                example: "SINGLE"
               createdAt:
                 type: string
                 format: date-time
               updatedAt:
                 type: string
                 format: date-time
+
+    # ========================================================================
+    # Tag Validation Request
+    # ========================================================================
+    TagValidationRequest:
+      type: object
+      required:
+        - tags
+      properties:
+        tags:
+          type: object
+          description: "Proposed tag assignments to validate."
+          properties:
+            Application:
+              type: string
+            Tier:
+              type: string
+            Environment:
+              type: string
+            Compliance:
+              oneOf:
+                - type: string
+                - type: array
+                  items:
+                    type: string
+            DataClassification:
+              type: string
+            CostCenter:
+              type: string
+        site:
+          type: string
+          description: "Target site for applicability validation."
+          enum: ["NDCNG", "TULNG"]
+
+    # ========================================================================
+    # Tag Validation Response
+    # ========================================================================
+    TagValidationResponse:
+      type: object
+      required:
+        - valid
+        - errors
+      properties:
+        valid:
+          type: boolean
+          description: "Whether the tag combination is valid."
+          example: true
+        errors:
+          type: array
+          description: "Validation errors (empty if valid)."
+          items:
+            type: object
+            required:
+              - code
+              - field
+              - message
+            properties:
+              code:
+                type: string
+                description: "DFW error code (DFW-4001 through DFW-4006)."
+                example: "DFW-4003"
+              field:
+                type: string
+                description: "Tag field that caused the error."
+                example: "compliance"
+              message:
+                type: string
+                description: "Human-readable error description."
+                example: "PCI workloads cannot be placed in Sandbox environment"
+        warnings:
+          type: array
+          description: "Non-blocking warnings about the tag combination."
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+              field:
+                type: string
+              message:
+                type: string
+
+    # ========================================================================
+    # Conflict Rule List Response
+    # ========================================================================
+    ConflictRuleListResponse:
+      type: object
+      required:
+        - totalCount
+        - rules
+      properties:
+        totalCount:
+          type: integer
+          description: "Total number of conflict rules."
+          example: 10
+        rules:
+          type: array
+          description: "Tag conflict rules."
+          items:
+            type: object
+            required:
+              - category1
+              - value1
+              - category2
+              - value2
+              - errorMessage
+              - isActive
+            properties:
+              ruleId:
+                type: string
+                description: "Unique rule identifier."
+              category1:
+                type: string
+                description: "First tag category in the conflict."
+                example: "Compliance"
+              value1:
+                type: string
+                description: "First tag value in the conflict."
+                example: "PCI"
+              category2:
+                type: string
+                description: "Second tag category in the conflict."
+                example: "Environment"
+              value2:
+                type: string
+                description: "Second tag value in the conflict."
+                example: "Sandbox"
+              errorCode:
+                type: string
+                description: "DFW error code for this conflict."
+                example: "DFW-4003"
+              errorMessage:
+                type: string
+                description: "Error message when this conflict is triggered."
+                example: "PCI workloads cannot be placed in Sandbox environment"
+              isActive:
+                type: boolean
+                description: "Whether this rule is currently active."
+                example: true
 
     # ========================================================================
     # Error Response
@@ -713,3 +1084,13 @@ components:
         affectedVmCount:
           type: integer
           description: "Number of affected VMs (for TAG_IN_USE errors)."
+        details:
+          type: array
+          description: "Additional error details."
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
