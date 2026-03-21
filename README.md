@@ -1,6 +1,6 @@
 # NSX DFW Automation Pipeline
 
-![CI](https://img.shields.io/github/actions/workflow/status/enterprise/dfw-automation-pipeline/ci.yml?branch=main&label=CI)
+![CI](https://img.shields.io/github/actions/workflow/status/srikanth-nalam/dfw-automation-pipeline/ci.yml?branch=main&label=CI)
 ![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green)
@@ -50,7 +50,7 @@ flowchart LR
 
 ```bash
 # Clone the repository
-git clone https://github.com/enterprise/dfw-automation-pipeline.git
+git clone https://github.com/srikanth-nalam/dfw-automation-pipeline.git
 cd dfw-automation-pipeline
 
 # Install dependencies
@@ -68,11 +68,6 @@ npm run test:integration
 # Lint the codebase
 npm run lint
 
-# Validate JSON schemas
-npm run validate-schemas
-
-# Validate YAML policies
-npm run validate-policies
 ```
 
 ## Directory Structure
@@ -134,6 +129,27 @@ dfw-automation-pipeline/
 └── LICENSE                      # MIT License
 ```
 
+## Prerequisites and Deployment
+
+For detailed deployment instructions, prerequisites, test data setup, and demo walkthroughs, see the **[Developer Deployment Guide](docs/DEVELOPER-GUIDE.md)**.
+
+**Key prerequisites at a glance:**
+
+- VMware vCenter Server 7.0U3+ and NSX-T Manager 3.2+
+- VMware Aria Automation Orchestrator (vRO) 8.10+
+- ServiceNow instance (Zurich Patch 6+) with Admin access and REST API enabled
+- Service accounts for vRO→vCenter, vRO→NSX, vRO→ServiceNow, and ServiceNow→vRO integrations
+- Network connectivity (HTTPS/443) between all integration endpoints
+- Node.js 18+ and npm 9+ for local development and testing
+
+The Developer Guide covers:
+- Complete prerequisites checklist with exact versions and permissions
+- Step-by-step deployment for all 22 vRO actions, 3 workflows, and 10 ServiceNow components
+- NSX tag category, security group, and DFW policy configuration
+- Test data setup with 26 tag dictionary entries and bulk-load scripts
+- Five end-to-end demo scenarios (Day 0, Day 2, Day N, Emergency Quarantine, Drift Detection)
+- Troubleshooting guide for common setup issues
+
 ## Design Patterns
 
 This pipeline implements several design patterns to ensure reliability, maintainability, and resilience in a distributed VMware environment:
@@ -187,13 +203,8 @@ See [`src/vro/workflows/README.md`](src/vro/workflows/README.md) for detailed im
 1. **Fork** this repository and create a feature branch from `main`.
 2. Follow the existing code style enforced by `.eslintrc.json`.
 3. Write tests for all new functionality. Maintain the coverage thresholds defined in `jest.config.js`.
-4. Validate schemas and policies before submitting:
-   ```bash
-   npm run validate-schemas
-   npm run validate-policies
-   ```
-5. Create a pull request with a clear description of the change, referencing any relevant FR or NFR IDs.
-6. All PRs require passing CI checks (lint, test, schema validation, docs check).
+4. Create a pull request with a clear description of the change, referencing any relevant FR or NFR IDs.
+5. All PRs require passing CI checks (lint, test, docs check).
 
 ### Commit Convention
 

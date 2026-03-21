@@ -3,3 +3,5 @@ coverage/
 .env
 *.log
 .mcp.json
+.claude/
+CLAUDE.md
