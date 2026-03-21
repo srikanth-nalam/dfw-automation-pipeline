@@ -1,0 +1,176 @@
+---
+# ============================================================================
+# DFW Policy: Application Template (APP001)
+# Source: BRD Appendix D.3 — Application Micro-Segmentation Template
+# ============================================================================
+# Purpose: Defines a reusable three-tier application micro-segmentation
+#          pattern. Each application onboarded through the pipeline receives
+#          a policy generated from this template with app-specific group
+#          references and rule naming.
+# ============================================================================
+
+policy_name: "APP001-Application-Policy"
+display_name: "APP001 — Three-Tier Application Micro-Segmentation"
+description: >
+  Application-level micro-segmentation policy for APP001. Enforces a strict
+  three-tier communication model: load balancers may reach the web tier,
+  web tier may reach the application tier, and the application tier may
+  reach the database tier. All other traffic is denied by default. Database
+  access is logged for compliance auditing.
+
+nsx_category: "Application"
+scope: "LOCAL:NDCNG"
+priority: 3100
+locked: false
+stateful: true
+
+metadata:
+  owner: "APP001 Application Team"
+  brd_reference: "Appendix D.3"
+  change_control: "CHG0000003"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 90
+  application_code: "APP001"
+  application_name: "Enterprise Portal"
+  data_classification: "Confidential"
+  compliance_tags:
+    - "PCI"
+    - "SOX"
+  site: "NDCNG"
+
+# Template variables — replaced during Day 0 provisioning
+# _APP_CODE_    : Application identifier (e.g., APP001)
+# _ENVIRONMENT_ : Target environment (e.g., Production)
+# _SITE_        : Deployment site (e.g., NDCNG)
+# _PRIORITY_    : Computed priority based on app registration order
+
+rules:
+  # --------------------------------------------------------------------------
+  # Inbound HTTPS from Load Balancer to Web Tier
+  # --------------------------------------------------------------------------
+  - rule_name: "APP001-Web-Allow-HTTPS-Inbound"
+    display_name: "APP001 — Allow HTTPS Inbound to Web Tier"
+    description: >
+      Permits HTTPS (TCP/443) and HTTP (TCP/80) traffic from the load
+      balancer tier to the APP001 web tier. HTTP is permitted only for
+      health-check probes; application traffic must use TLS.
+    action: "ALLOW"
+    direction: "IN"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 10
+    source_groups:
+      - "/infra/domains/default/groups/APP001-LB"
+    destination_groups:
+      - "/infra/domains/default/groups/APP001_Web_Production"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 443
+      - protocol: "TCP"
+        destination_ports:
+          - 80
+    applied_to:
+      - "/infra/domains/default/groups/APP001_Web_Production"
+    tag: "Application"
+    notes: "HTTP/80 used for LB health probes only. Enforce TLS at application layer."
+
+  # --------------------------------------------------------------------------
+  # Web Tier → Application Tier
+  # --------------------------------------------------------------------------
+  - rule_name: "APP001-Web-to-App-Allow"
+    display_name: "APP001 — Allow Web Tier to Application Tier"
+    description: >
+      Permits the web tier to communicate with the application tier over
+      HTTP (TCP/8080) and HTTPS (TCP/8443). All application logic resides
+      in the app tier; the web tier acts as a reverse proxy / presentation
+      layer.
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 20
+    source_groups:
+      - "/infra/domains/default/groups/APP001_Web_Production"
+    destination_groups:
+      - "/infra/domains/default/groups/APP001_App_Production"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 8080
+      - protocol: "TCP"
+        destination_ports:
+          - 8443
+    applied_to:
+      - "/infra/domains/default/groups/APP001_Web_Production"
+      - "/infra/domains/default/groups/APP001_App_Production"
+    tag: "Application"
+    notes: "No direct web-to-database communication is permitted."
+
+  # --------------------------------------------------------------------------
+  # Application Tier → Database Tier
+  # --------------------------------------------------------------------------
+  - rule_name: "APP001-App-to-DB-Allow"
+    display_name: "APP001 — Allow Application Tier to Database Tier"
+    description: >
+      Permits the application tier to reach the database tier on Oracle
+      (TCP/1521) and PostgreSQL (TCP/5432) ports. All database access is
+      logged for PCI DSS Requirement 10 and SOX audit trail compliance.
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "APP001-APP-TO-DB"
+    disabled: false
+    sequence_number: 30
+    source_groups:
+      - "/infra/domains/default/groups/APP001_App_Production"
+    destination_groups:
+      - "/infra/domains/default/groups/APP001_DB_Production"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 1521
+      - protocol: "TCP"
+        destination_ports:
+          - 5432
+    applied_to:
+      - "/infra/domains/default/groups/APP001_App_Production"
+      - "/infra/domains/default/groups/APP001_DB_Production"
+    tag: "Application"
+    notes: >
+      Logged for PCI DSS Req 10 and SOX audit. Alert if connection count
+      exceeds baseline by 200%.
+
+  # --------------------------------------------------------------------------
+  # Default Deny All
+  # --------------------------------------------------------------------------
+  - rule_name: "Default-Deny-All"
+    display_name: "APP001 — Default Deny All"
+    description: >
+      Implicit deny rule that drops and logs all traffic not explicitly
+      permitted by preceding rules. Ensures zero-trust posture for the
+      application. Log entries feed SIEM for anomaly detection.
+    action: "DROP"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "APP001-DEFAULT-DENY"
+    disabled: false
+    sequence_number: 9999
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "ANY"
+    services:
+      - "ANY"
+    applied_to:
+      - "/infra/domains/default/groups/APP001_Web_Production"
+      - "/infra/domains/default/groups/APP001_App_Production"
+      - "/infra/domains/default/groups/APP001_DB_Production"
+    tag: "Application"
+    notes: >
+      Must always be the last rule (highest sequence number). Do not add
+      rules after this entry. SIEM correlation rule ID: COR-APP001-DENY.

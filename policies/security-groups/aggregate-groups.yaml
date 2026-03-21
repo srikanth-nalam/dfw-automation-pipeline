@@ -1,0 +1,270 @@
+---
+# ============================================================================
+# Security Groups: Aggregate Tag-Based Groups
+# ============================================================================
+# Purpose: Defines dynamic NSX security groups based on tag criteria.
+#          These groups aggregate VMs by environment, tier, compliance
+#          framework, and data classification. They are referenced by
+#          DFW policies for zone isolation, compliance enforcement, and
+#          reporting.
+# ============================================================================
+
+metadata:
+  owner: "Network Security Team"
+  brd_reference: "Section 4.3 — Security Group Taxonomy"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 90
+  naming_convention: "All-{Category}-{Value}-VMs"
+
+# ============================================================================
+# Environment Groups
+# ============================================================================
+environment_groups:
+  - group_name: "All-Production-VMs"
+    display_name: "All Production VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Environment=Production.
+      Used as the source or destination in environment zone isolation rules
+      and compliance-scoped policies.
+    nsx_path: "/infra/domains/default/groups/All-Production-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Environment"
+        tag: "Production"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Environment"
+        tag: "Production"
+
+  - group_name: "All-Development-VMs"
+    display_name: "All Development VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Environment=Development.
+      Used in zone isolation rules to prevent dev-to-prod communication.
+    nsx_path: "/infra/domains/default/groups/All-Development-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Environment"
+        tag: "Development"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Environment"
+        tag: "Development"
+
+  - group_name: "All-PreProduction-VMs"
+    display_name: "All Pre-Production VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Environment=Pre-Production.
+      Pre-production has limited read-only access to production for
+      deployment validation.
+    nsx_path: "/infra/domains/default/groups/All-PreProduction-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Environment"
+        tag: "Pre-Production"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Environment"
+        tag: "Pre-Production"
+
+  - group_name: "All-Sandbox-VMs"
+    display_name: "All Sandbox VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Environment=Sandbox.
+      Sandbox environments are fully isolated from production, similar
+      to development.
+    nsx_path: "/infra/domains/default/groups/All-Sandbox-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Environment"
+        tag: "Sandbox"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Environment"
+        tag: "Sandbox"
+
+# ============================================================================
+# Tier Groups
+# ============================================================================
+tier_groups:
+  - group_name: "All-Web-Tier-VMs"
+    display_name: "All Web Tier VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Tier=Web across all
+      applications and environments. Used for tier-level reporting and
+      broad web-tier security baselines.
+    nsx_path: "/infra/domains/default/groups/All-Web-Tier-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Tier"
+        tag: "Web"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Tier"
+        tag: "Web"
+
+  - group_name: "All-App-Tier-VMs"
+    display_name: "All Application Tier VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Tier=Application across
+      all applications and environments. Used for application-layer
+      security baselines and vulnerability scanning scope.
+    nsx_path: "/infra/domains/default/groups/All-App-Tier-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Tier"
+        tag: "Application"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Tier"
+        tag: "Application"
+
+  - group_name: "All-Database-VMs"
+    display_name: "All Database Tier VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Tier=Database across all
+      applications and environments. Used for database-tier hardening
+      policies, encryption requirements, and audit logging scope.
+    nsx_path: "/infra/domains/default/groups/All-Database-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Tier"
+        tag: "Database"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Tier"
+        tag: "Database"
+
+# ============================================================================
+# Compliance Groups
+# ============================================================================
+compliance_groups:
+  - group_name: "All-PCI-VMs"
+    display_name: "All PCI-Scoped VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Compliance=PCI. These
+      VMs are subject to PCI DSS requirements including network
+      segmentation, logging, and access control validation.
+    nsx_path: "/infra/domains/default/groups/All-PCI-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Compliance"
+        tag: "PCI"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Compliance"
+        tag: "PCI"
+    compliance_notes: >
+      PCI DSS v4.0 Requirement 1.3 — network segmentation must be validated
+      quarterly. This group defines the in-scope CDE boundary.
+
+  - group_name: "All-HIPAA-VMs"
+    display_name: "All HIPAA-Scoped VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Compliance=HIPAA. These
+      VMs handle ePHI and are subject to HIPAA Security Rule technical
+      safeguards for access control and audit controls.
+    nsx_path: "/infra/domains/default/groups/All-HIPAA-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Compliance"
+        tag: "HIPAA"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Compliance"
+        tag: "HIPAA"
+    compliance_notes: >
+      HIPAA §164.312(a)(1) — access control, §164.312(b) — audit controls.
+      All ePHI-handling VMs must be in this group.
+
+  - group_name: "All-SOX-VMs"
+    display_name: "All SOX-Scoped VMs"
+    description: >
+      Dynamic group containing all VMs tagged with Compliance=SOX. These
+      VMs process financial data subject to Sarbanes-Oxley Act Section 404
+      internal control requirements.
+    nsx_path: "/infra/domains/default/groups/All-SOX-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "Compliance"
+        tag: "SOX"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "Compliance"
+        tag: "SOX"
+    compliance_notes: >
+      SOX Section 404 — IT general controls must include logical access
+      restrictions for financial systems.
+
+# ============================================================================
+# Data Classification Groups
+# ============================================================================
+data_classification_groups:
+  - group_name: "All-Confidential-Data-VMs"
+    display_name: "All Confidential Data VMs"
+    description: >
+      Dynamic group containing all VMs tagged with
+      DataClassification=Confidential. These VMs require encryption in
+      transit and at rest, restricted access, and enhanced logging.
+    nsx_path: "/infra/domains/default/groups/All-Confidential-Data-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "DataClassification"
+        tag: "Confidential"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "DataClassification"
+        tag: "Confidential"
+    data_handling_requirements:
+      encryption_in_transit: true
+      encryption_at_rest: true
+      enhanced_logging: true
+      dlp_enabled: true
+
+  - group_name: "All-Restricted-Data-VMs"
+    display_name: "All Restricted Data VMs"
+    description: >
+      Dynamic group containing all VMs tagged with
+      DataClassification=Restricted. This is the highest data classification
+      level requiring the strictest controls: mandatory encryption, DLP,
+      privileged access management, and continuous monitoring.
+    nsx_path: "/infra/domains/default/groups/All-Restricted-Data-VMs"
+    membership_criteria:
+      - type: "Tag"
+        scope: "DataClassification"
+        tag: "Restricted"
+        operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Aggregate"
+      - scope: "DataClassification"
+        tag: "Restricted"
+    data_handling_requirements:
+      encryption_in_transit: true
+      encryption_at_rest: true
+      enhanced_logging: true
+      dlp_enabled: true
+      pam_required: true
+      continuous_monitoring: true

@@ -1,0 +1,220 @@
+---
+# ============================================================================
+# DFW Policy: Shared Services Infrastructure
+# Source: BRD Appendix D.1 — Shared Services Allow Rules
+# ============================================================================
+# Purpose: Permits all VMs to reach core infrastructure services (DNS, NTP,
+#          Active Directory, Monitoring, and Backup) regardless of zone or
+#          application membership. Applied at the Infrastructure category so
+#          it is evaluated before Environment and Application rules.
+# ============================================================================
+
+policy_name: "Shared-Services-Infrastructure-Policy"
+display_name: "Shared Services Infrastructure Allow Rules"
+description: >
+  Baseline infrastructure policy that permits every workload to communicate
+  with core shared services — DNS, NTP, Active Directory/LDAP, centralized
+  monitoring collectors, and enterprise backup agents. This policy ensures
+  operational continuity across all environments and zones.
+
+nsx_category: "Infrastructure"
+scope: "GLOBAL"
+priority: 1000
+locked: false
+stateful: true
+
+metadata:
+  owner: "Network Security Team"
+  brd_reference: "Appendix D.1"
+  change_control: "CHG0000001"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 90
+  compliance_tags:
+    - "SOX"
+    - "PCI"
+    - "HIPAA"
+
+rules:
+  # --------------------------------------------------------------------------
+  # DNS — UDP
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-DNS-UDP"
+    display_name: "Allow DNS (UDP/53)"
+    description: >
+      Permits UDP-based DNS resolution from any workload to designated DNS
+      servers. Required for name resolution across all environments.
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 10
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/DNS-Servers"
+    services:
+      - protocol: "UDP"
+        destination_ports:
+          - 53
+    tag: "Infrastructure"
+    notes: "Core service — do not disable without DNS failover in place."
+
+  # --------------------------------------------------------------------------
+  # DNS — TCP
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-DNS-TCP"
+    display_name: "Allow DNS (TCP/53)"
+    description: >
+      Permits TCP-based DNS resolution and zone transfers from any workload
+      to designated DNS servers. TCP is used for responses exceeding 512
+      bytes and for AXFR/IXFR zone transfers.
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 20
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/DNS-Servers"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 53
+    tag: "Infrastructure"
+    notes: "Required for large DNS responses and zone transfers."
+
+  # --------------------------------------------------------------------------
+  # NTP
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-NTP"
+    display_name: "Allow NTP (UDP/123)"
+    description: >
+      Permits NTP time synchronization from any workload to designated NTP
+      servers. Accurate time is critical for Kerberos authentication, log
+      correlation, and certificate validation.
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 30
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/NTP-Servers"
+    services:
+      - protocol: "UDP"
+        destination_ports:
+          - 123
+    tag: "Infrastructure"
+    notes: "Time drift >5 min will break Kerberos auth."
+
+  # --------------------------------------------------------------------------
+  # Active Directory / Kerberos / LDAP
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-AD-Kerberos"
+    display_name: "Allow Active Directory & Kerberos"
+    description: >
+      Permits authentication and directory-service traffic from any workload
+      to Active Directory domain controllers. Covers Kerberos (TCP/UDP 88),
+      LDAP (TCP/UDP 389), LDAPS (TCP 636), and Global Catalog
+      (TCP 3268/3269).
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 40
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/AD-Domain-Controllers"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 88
+      - protocol: "UDP"
+        destination_ports:
+          - 88
+      - protocol: "TCP"
+        destination_ports:
+          - 389
+      - protocol: "UDP"
+        destination_ports:
+          - 389
+      - protocol: "TCP"
+        destination_ports:
+          - 636
+      - protocol: "TCP"
+        destination_ports:
+          - 3268
+      - protocol: "TCP"
+        destination_ports:
+          - 3269
+    tag: "Infrastructure"
+    notes: "All ports required for full AD functionality including Global Catalog."
+
+  # --------------------------------------------------------------------------
+  # Monitoring Agent
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-Monitoring-Agent"
+    display_name: "Allow Monitoring Agent Traffic"
+    description: >
+      Permits monitoring-agent communication from any workload to centralized
+      monitoring collectors and log aggregation endpoints. Covers agent
+      check-in (TCP/8443), Logstash/Beats (TCP/5044), and Elasticsearch
+      ingest (TCP/9200).
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 50
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/Monitoring-Servers"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 8443
+      - protocol: "TCP"
+        destination_ports:
+          - 5044
+      - protocol: "TCP"
+        destination_ports:
+          - 9200
+    tag: "Infrastructure"
+    notes: "Blocking this rule will cause monitoring gaps and alert blackouts."
+
+  # --------------------------------------------------------------------------
+  # Backup Agent
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-Backup-Agent"
+    display_name: "Allow Backup Agent Traffic"
+    description: >
+      Permits enterprise backup agent communication from any workload to
+      backup media servers. Covers NetBackup bpcd (TCP/1556) and vnetd
+      (TCP/10082).
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 60
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/Backup-Servers"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 1556
+      - protocol: "TCP"
+        destination_ports:
+          - 10082
+    tag: "Infrastructure"
+    notes: "Required for RPO compliance. Blocking will cause backup job failures."

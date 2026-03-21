@@ -1,0 +1,86 @@
+name: DFW Automation Pipeline CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - run: npm test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: coverage/
+
+  schema-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - run: npm ci
+      - name: Validate JSON Schemas
+        run: |
+          node -e "
+          const Ajv = require('ajv');
+          const fs = require('fs');
+          const schemas = [
+            'schemas/snow-vro-payload.schema.json',
+            'schemas/vro-snow-callback.schema.json',
+            'schemas/tag-dictionary-entry.schema.json',
+            'schemas/dfw-policy-template.schema.json'
+          ];
+          const ajv = new Ajv({ allErrors: true });
+          let hasErrors = false;
+          schemas.forEach(s => {
+            try {
+              const schema = JSON.parse(fs.readFileSync(s, 'utf8'));
+              ajv.compile(schema);
+              console.log('✓ Valid:', s);
+            } catch (err) {
+              console.error('✗ Invalid:', s, err.message);
+              hasErrors = true;
+            }
+          });
+          if (hasErrors) process.exit(1);
+          "
+
+  docs-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify documentation files exist
+        run: |
+          MISSING=0
+          for doc in README.md docs/SDD.md docs/HLD.md docs/LLD.md docs/FRD.md docs/NFR-MAPPING.md docs/TEST-STRATEGY.md docs/RUNBOOK.md; do
+            if [ ! -f "$doc" ]; then
+              echo "Missing: $doc"
+              MISSING=1
+            else
+              echo "Found: $doc"
+            fi
+          done
+          if [ $MISSING -eq 1 ]; then exit 1; fi
+          echo "All documentation files present"

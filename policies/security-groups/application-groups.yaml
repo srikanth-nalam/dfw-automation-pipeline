@@ -1,0 +1,204 @@
+---
+# ============================================================================
+# Security Groups: Application-Specific Groups
+# ============================================================================
+# Purpose: Defines application-specific NSX security groups following the
+#          naming convention {AppCode}_{Tier}_{Environment}. Each group
+#          uses a compound tag membership criteria combining the Application,
+#          Tier, and Environment tags to precisely scope VM membership.
+# ============================================================================
+
+metadata:
+  owner: "Application Security Team"
+  brd_reference: "Section 4.3.2 — Application Security Groups"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 90
+  naming_convention: "{AppCode}_{Tier}_{Environment}"
+  naming_notes: >
+    Group names follow the pattern {AppCode}_{Tier}_{Environment} to ensure
+    uniqueness and readability. During Day 0 provisioning, the automation
+    pipeline creates groups from this template by substituting the
+    application code, tier, and environment values.
+
+# ============================================================================
+# APP001 — Enterprise Portal (Production)
+# ============================================================================
+application_groups:
+  # --------------------------------------------------------------------------
+  # APP001 Web Tier — Production
+  # --------------------------------------------------------------------------
+  - group_name: "APP001_Web_Production"
+    display_name: "APP001 — Web Tier (Production)"
+    description: >
+      Contains all production web-tier VMs for APP001 (Enterprise Portal).
+      VMs in this group serve HTTPS traffic from the load balancer and
+      forward requests to the application tier. Group membership is
+      determined by the intersection of Application=APP001, Tier=Web,
+      and Environment=Production tags.
+    nsx_path: "/infra/domains/default/groups/APP001_Web_Production"
+    membership_criteria:
+      - conjunction_operator: "AND"
+        criteria:
+          - type: "Tag"
+            scope: "Application"
+            tag: "APP001"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Tier"
+            tag: "Web"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Environment"
+            tag: "Production"
+            operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Application"
+      - scope: "Application"
+        tag: "APP001"
+      - scope: "Tier"
+        tag: "Web"
+      - scope: "Environment"
+        tag: "Production"
+
+  # --------------------------------------------------------------------------
+  # APP001 Application Tier — Production
+  # --------------------------------------------------------------------------
+  - group_name: "APP001_App_Production"
+    display_name: "APP001 — Application Tier (Production)"
+    description: >
+      Contains all production application-tier VMs for APP001 (Enterprise
+      Portal). VMs in this group host business logic, receive requests from
+      the web tier, and issue queries to the database tier. Group membership
+      is determined by the intersection of Application=APP001,
+      Tier=Application, and Environment=Production tags.
+    nsx_path: "/infra/domains/default/groups/APP001_App_Production"
+    membership_criteria:
+      - conjunction_operator: "AND"
+        criteria:
+          - type: "Tag"
+            scope: "Application"
+            tag: "APP001"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Tier"
+            tag: "Application"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Environment"
+            tag: "Production"
+            operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Application"
+      - scope: "Application"
+        tag: "APP001"
+      - scope: "Tier"
+        tag: "Application"
+      - scope: "Environment"
+        tag: "Production"
+
+  # --------------------------------------------------------------------------
+  # APP001 Database Tier — Production
+  # --------------------------------------------------------------------------
+  - group_name: "APP001_DB_Production"
+    display_name: "APP001 — Database Tier (Production)"
+    description: >
+      Contains all production database-tier VMs for APP001 (Enterprise
+      Portal). VMs in this group host Oracle and PostgreSQL databases.
+      Database access is logged for PCI and SOX compliance. Group membership
+      is determined by the intersection of Application=APP001,
+      Tier=Database, and Environment=Production tags.
+    nsx_path: "/infra/domains/default/groups/APP001_DB_Production"
+    membership_criteria:
+      - conjunction_operator: "AND"
+        criteria:
+          - type: "Tag"
+            scope: "Application"
+            tag: "APP001"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Tier"
+            tag: "Database"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Environment"
+            tag: "Production"
+            operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Application"
+      - scope: "Application"
+        tag: "APP001"
+      - scope: "Tier"
+        tag: "Database"
+      - scope: "Environment"
+        tag: "Production"
+
+# ============================================================================
+# Template for New Applications
+# ============================================================================
+# When onboarding a new application, the Day 0 automation pipeline
+# generates groups from this template by replacing the placeholder
+# variables with actual values.
+# ============================================================================
+application_group_template:
+  description: >
+    Template for generating application-specific security groups during
+    Day 0 VM provisioning. The pipeline substitutes the placeholder
+    variables below with values from the ServiceNow request payload.
+
+  placeholders:
+    _APP_CODE_: "Application identifier (e.g., APP002, APP003)"
+    _TIER_: "Deployment tier (Web, Application, Database, Middleware, Utility)"
+    _ENVIRONMENT_: "Target environment (Production, Pre-Production, UAT, Development, etc.)"
+
+  template:
+    group_name: "{_APP_CODE_}_{_TIER_}_{_ENVIRONMENT_}"
+    display_name: "{_APP_CODE_} — {_TIER_} Tier ({_ENVIRONMENT_})"
+    description: >
+      Contains all {_ENVIRONMENT_} {_TIER_}-tier VMs for {_APP_CODE_}.
+      Group membership is determined by the intersection of
+      Application={_APP_CODE_}, Tier={_TIER_}, and
+      Environment={_ENVIRONMENT_} tags.
+    nsx_path: "/infra/domains/default/groups/{_APP_CODE_}_{_TIER_}_{_ENVIRONMENT_}"
+    membership_criteria:
+      - conjunction_operator: "AND"
+        criteria:
+          - type: "Tag"
+            scope: "Application"
+            tag: "{_APP_CODE_}"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Tier"
+            tag: "{_TIER_}"
+            operator: "EQUALS"
+          - type: "Tag"
+            scope: "Environment"
+            tag: "{_ENVIRONMENT_}"
+            operator: "EQUALS"
+    tags:
+      - scope: "GroupType"
+        tag: "Application"
+      - scope: "Application"
+        tag: "{_APP_CODE_}"
+      - scope: "Tier"
+        tag: "{_TIER_}"
+      - scope: "Environment"
+        tag: "{_ENVIRONMENT_}"
+
+  # Standard tiers to generate for a three-tier application
+  standard_tiers:
+    - tier: "Web"
+      typical_ports: [80, 443]
+    - tier: "Application"
+      typical_ports: [8080, 8443]
+    - tier: "Database"
+      typical_ports: [1521, 5432, 3306, 1433]
+
+  # Standard environments to generate
+  standard_environments:
+    - "Production"
+    - "Pre-Production"
+    - "UAT"
+    - "Development"

@@ -1,0 +1,133 @@
+---
+# ============================================================================
+# DFW Policy: Environment Zone Isolation
+# Source: BRD Appendix D.2 — Environment Zone Isolation Rules
+# ============================================================================
+# Purpose: Enforces strict network segmentation between environment zones.
+#          Production workloads are isolated from Development/Sandbox to
+#          prevent lateral movement and data leakage across trust boundaries.
+# ============================================================================
+
+policy_name: "Environment-Zone-Isolation-Policy"
+display_name: "Environment Zone Isolation Rules"
+description: >
+  Enforces environment-level segmentation by blocking traffic between
+  Production and Development/Sandbox zones. Pre-Production is granted
+  limited read-only access to Production for deployment validation.
+  All denied traffic is logged for audit and forensic purposes.
+
+nsx_category: "Environment"
+scope: "GLOBAL"
+priority: 2000
+locked: false
+stateful: true
+
+metadata:
+  owner: "Network Security Team"
+  brd_reference: "Appendix D.2"
+  change_control: "CHG0000002"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 90
+  compliance_tags:
+    - "PCI"
+    - "SOX"
+    - "HIPAA"
+  regulatory_notes: >
+    PCI DSS Requirement 6.4.1 mandates separation of development/test
+    environments from production. SOX Section 404 requires logical access
+    controls between environments. HIPAA §164.312(e)(1) requires
+    transmission security controls for ePHI isolation.
+
+rules:
+  # --------------------------------------------------------------------------
+  # Block Production → Development/Sandbox
+  # --------------------------------------------------------------------------
+  - rule_name: "Block-Prod-to-Dev"
+    display_name: "Block Production to Development/Sandbox"
+    description: >
+      Prevents any traffic originating from Production-zone workloads from
+      reaching Development or Sandbox zones. Protects production data from
+      accidental exposure and prevents production workloads from depending
+      on non-production services.
+    action: "DROP"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "ENV-ISOLATION-PROD-TO-DEV"
+    disabled: false
+    sequence_number: 10
+    source_groups:
+      - "/infra/domains/default/groups/All-Production-VMs"
+    destination_groups:
+      - "/infra/domains/default/groups/All-Development-VMs"
+      - "/infra/domains/default/groups/All-Sandbox-VMs"
+    services:
+      - "ANY"
+    tag: "Environment-Isolation"
+    notes: >
+      Critical compliance rule. Disabling requires CAB approval and
+      compensating controls documented in the risk register.
+
+  # --------------------------------------------------------------------------
+  # Block Development/Sandbox → Production
+  # --------------------------------------------------------------------------
+  - rule_name: "Block-Dev-to-Prod"
+    display_name: "Block Development/Sandbox to Production"
+    description: >
+      Prevents any traffic originating from Development or Sandbox zones
+      from reaching Production workloads. Mitigates risk of untested code,
+      malware, or unauthorized access from lower-trust environments
+      impacting production services.
+    action: "DROP"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "ENV-ISOLATION-DEV-TO-PROD"
+    disabled: false
+    sequence_number: 20
+    source_groups:
+      - "/infra/domains/default/groups/All-Development-VMs"
+      - "/infra/domains/default/groups/All-Sandbox-VMs"
+    destination_groups:
+      - "/infra/domains/default/groups/All-Production-VMs"
+    services:
+      - "ANY"
+    tag: "Environment-Isolation"
+    notes: >
+      Critical compliance rule. Disabling requires CAB approval and
+      compensating controls documented in the risk register.
+
+  # --------------------------------------------------------------------------
+  # Allow Pre-Production → Production (read-only HTTPS)
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-PreProd-to-Prod-Readonly"
+    display_name: "Allow Pre-Production to Production (Read-Only HTTPS)"
+    description: >
+      Grants Pre-Production workloads limited, read-only access to
+      Production APIs over HTTPS (TCP/443) and secure management
+      (TCP/8443). Used for deployment smoke tests, integration validation,
+      and configuration drift detection. Write operations must be blocked
+      at the application layer.
+    action: "ALLOW"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "ENV-PREPROD-TO-PROD-READONLY"
+    disabled: false
+    sequence_number: 30
+    source_groups:
+      - "/infra/domains/default/groups/All-PreProduction-VMs"
+    destination_groups:
+      - "/infra/domains/default/groups/All-Production-VMs"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 443
+      - protocol: "TCP"
+        destination_ports:
+          - 8443
+    tag: "Environment-Isolation"
+    notes: >
+      Application-layer controls must enforce read-only semantics.
+      Network rule only permits HTTPS transport; it does not distinguish
+      GET from POST. Review quarterly with application owners.

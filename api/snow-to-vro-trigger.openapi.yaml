@@ -1,0 +1,527 @@
+---
+openapi: "3.0.3"
+
+info:
+  title: "SNOW to vRO DFW Lifecycle Trigger API"
+  version: "1.0.0"
+  description: >
+    REST API endpoint consumed by ServiceNow to trigger the vRealize
+    Orchestrator (vRO) DFW lifecycle workflow. This endpoint receives
+    Day 0 VM provisioning requests containing VM specifications, tag
+    assignments, and callback details. The workflow orchestrates NSX-T
+    tag application, security group membership, and DFW policy activation.
+  contact:
+    name: "Platform Automation Team"
+    email: "platform-automation@company.com"
+  license:
+    name: "Proprietary"
+
+servers:
+  - url: "https://vro.internal.company.com"
+    description: "Production vRO instance"
+  - url: "https://vro-preprod.internal.company.com"
+    description: "Pre-Production vRO instance"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: "DFW Lifecycle"
+    description: "DFW lifecycle workflow trigger and management"
+
+paths:
+  /api/vro/v1/workflows/dfw-lifecycle/trigger:
+    post:
+      operationId: "triggerDfwLifecycleWorkflow"
+      summary: "Trigger DFW Lifecycle Workflow"
+      description: >
+        Accepts a Day 0 VM provisioning request from ServiceNow and
+        initiates the DFW lifecycle workflow in vRO. The workflow
+        performs the following steps: validate payload, apply NSX tags,
+        assign security group membership, activate DFW policies, and
+        call back ServiceNow with the result.
+      tags:
+        - "DFW Lifecycle"
+      requestBody:
+        required: true
+        description: "Day 0 VM provisioning payload from ServiceNow"
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DfwLifecycleTriggerRequest"
+            examples:
+              day0-new-vm:
+                summary: "New VM provisioning (Day 0)"
+                value:
+                  correlationId: "SNOW-REQ-2026-0001234"
+                  requestType: "DAY0_PROVISION"
+                  vmName: "app001-web-prod-01"
+                  vmTemplate: "rhel9-hardened-base"
+                  cluster: "NDCNG-PROD-CL01"
+                  datastore: "NDCNG-VSAN-PROD-DS01"
+                  network: "NDCNG-PROD-WEB-VLAN100"
+                  cpuCount: 4
+                  memoryGB: 16
+                  diskGB: 100
+                  site: "NDCNG"
+                  tags:
+                    application: "APP001"
+                    tier: "Web"
+                    environment: "Production"
+                    compliance:
+                      - "PCI"
+                      - "SOX"
+                    dataClassification: "Confidential"
+                    costCenter: "CC1001"
+                  requestedBy: "john.doe@company.com"
+                  approvedBy: "jane.smith@company.com"
+                  callbackUrl: "https://snow.company.com/api/now/v1/dfw/callback"
+                  callbackToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  priority: "NORMAL"
+                  justification: "New web server for Enterprise Portal expansion"
+              day2-retag:
+                summary: "Day 2 re-tag operation"
+                value:
+                  correlationId: "SNOW-REQ-2026-0005678"
+                  requestType: "DAY2_RETAG"
+                  vmName: "app001-web-prod-01"
+                  site: "NDCNG"
+                  tags:
+                    application: "APP001"
+                    tier: "Web"
+                    environment: "Production"
+                    compliance:
+                      - "PCI"
+                      - "SOX"
+                      - "HIPAA"
+                    dataClassification: "Restricted"
+                    costCenter: "CC1001"
+                  requestedBy: "john.doe@company.com"
+                  approvedBy: "jane.smith@company.com"
+                  callbackUrl: "https://snow.company.com/api/now/v1/dfw/callback"
+                  callbackToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  priority: "HIGH"
+                  justification: "Adding HIPAA compliance scope for ePHI processing"
+      responses:
+        "202":
+          description: >
+            Request accepted. The DFW lifecycle workflow has been queued
+            for execution. The result will be delivered to the callback
+            URL upon completion.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DfwLifecycleTriggerResponse"
+              example:
+                executionId: "vro-exec-a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                correlationId: "SNOW-REQ-2026-0001234"
+                status: "ACCEPTED"
+                estimatedCompletionSeconds: 120
+                workflowVersion: "2.1.0"
+                queuePosition: 0
+        "400":
+          description: >
+            Bad request. The payload failed schema validation. The response
+            includes details about which fields failed validation and why.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidationErrorResponse"
+              example:
+                status: "REJECTED"
+                correlationId: "SNOW-REQ-2026-0001234"
+                errorCode: "VALIDATION_FAILED"
+                errorMessage: "Payload validation failed"
+                validationErrors:
+                  - field: "tags.compliance"
+                    message: "Invalid compliance value 'GDPR'. Allowed values: PCI, HIPAA, SOX, None"
+                    rejectedValue: "GDPR"
+                  - field: "site"
+                    message: "Site 'UNKNOWN' is not a recognized deployment site"
+                    rejectedValue: "UNKNOWN"
+        "401":
+          description: "Unauthorized — invalid or expired bearer token"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: "ERROR"
+                errorCode: "UNAUTHORIZED"
+                errorMessage: "Bearer token is invalid or expired"
+        "409":
+          description: >
+            Conflict — a workflow execution is already in progress for
+            the specified VM.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: "ERROR"
+                errorCode: "CONFLICT"
+                errorMessage: "An active workflow execution already exists for VM 'app001-web-prod-01'"
+                existingExecutionId: "vro-exec-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        "429":
+          description: "Rate limit exceeded"
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: "Seconds to wait before retrying"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                status: "ERROR"
+                errorCode: "RATE_LIMITED"
+                errorMessage: "Rate limit exceeded. Maximum 100 requests per minute."
+        "500":
+          description: "Internal server error"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        JWT bearer token issued by the enterprise identity provider.
+        Token must include the 'vro:dfw-lifecycle:trigger' scope.
+
+  schemas:
+    # ========================================================================
+    # Request Schema
+    # ========================================================================
+    DfwLifecycleTriggerRequest:
+      type: object
+      required:
+        - correlationId
+        - requestType
+        - vmName
+        - site
+        - tags
+        - callbackUrl
+      properties:
+        correlationId:
+          type: string
+          description: >
+            Unique correlation identifier from ServiceNow used to track
+            the request end-to-end across SNOW, vRO, and NSX-T. Format
+            is typically SNOW-REQ-YYYY-NNNNNNN.
+          example: "SNOW-REQ-2026-0001234"
+          pattern: "^SNOW-REQ-[0-9]{4}-[0-9]{7}$"
+          maxLength: 30
+        requestType:
+          type: string
+          description: >
+            Type of lifecycle operation. DAY0_PROVISION for new VMs,
+            DAY2_RETAG for tag updates, DAY2_DECOMMISSION for removal.
+          enum:
+            - "DAY0_PROVISION"
+            - "DAY2_RETAG"
+            - "DAY2_DECOMMISSION"
+          example: "DAY0_PROVISION"
+        vmName:
+          type: string
+          description: >
+            Fully qualified VM name in vCenter. Must follow the enterprise
+            naming convention: {appcode}-{tier}-{env}-{seq}.
+          example: "app001-web-prod-01"
+          pattern: "^[a-z0-9][a-z0-9\\-]{2,62}[a-z0-9]$"
+          minLength: 4
+          maxLength: 64
+        vmTemplate:
+          type: string
+          description: >
+            vCenter template name to clone from. Required for
+            DAY0_PROVISION, ignored for other request types.
+          example: "rhel9-hardened-base"
+          maxLength: 128
+        cluster:
+          type: string
+          description: >
+            Target vSphere cluster for VM placement. Required for
+            DAY0_PROVISION.
+          example: "NDCNG-PROD-CL01"
+          maxLength: 128
+        datastore:
+          type: string
+          description: >
+            Target datastore or datastore cluster. Required for
+            DAY0_PROVISION.
+          example: "NDCNG-VSAN-PROD-DS01"
+          maxLength: 128
+        network:
+          type: string
+          description: >
+            Target port group or NSX segment for the primary NIC.
+            Required for DAY0_PROVISION.
+          example: "NDCNG-PROD-WEB-VLAN100"
+          maxLength: 128
+        cpuCount:
+          type: integer
+          description: "Number of virtual CPUs. Required for DAY0_PROVISION."
+          minimum: 1
+          maximum: 128
+          example: 4
+        memoryGB:
+          type: integer
+          description: "Memory allocation in gigabytes. Required for DAY0_PROVISION."
+          minimum: 1
+          maximum: 1024
+          example: 16
+        diskGB:
+          type: integer
+          description: "Primary disk size in gigabytes. Required for DAY0_PROVISION."
+          minimum: 20
+          maximum: 16384
+          example: 100
+        site:
+          type: string
+          description: >
+            Physical deployment site code. Determines which NSX-T
+            manager and vCenter to target.
+          enum:
+            - "NDCNG"
+            - "NDCRS"
+            - "NDCDR"
+          example: "NDCNG"
+        tags:
+          $ref: "#/components/schemas/TagAssignment"
+        requestedBy:
+          type: string
+          description: "Email address of the person who submitted the request in ServiceNow."
+          format: email
+          example: "john.doe@company.com"
+          maxLength: 256
+        approvedBy:
+          type: string
+          description: "Email address of the approver who authorized the request."
+          format: email
+          example: "jane.smith@company.com"
+          maxLength: 256
+        callbackUrl:
+          type: string
+          description: >
+            ServiceNow REST endpoint that vRO will call with the
+            execution result (success or failure).
+          format: uri
+          example: "https://snow.company.com/api/now/v1/dfw/callback"
+          maxLength: 512
+        callbackToken:
+          type: string
+          description: >
+            Bearer token for authenticating the callback request to
+            ServiceNow. Short-lived, scoped to this correlation ID.
+          example: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+          maxLength: 4096
+        priority:
+          type: string
+          description: >
+            Execution priority. EMERGENCY requests bypass the queue
+            and are processed immediately.
+          enum:
+            - "LOW"
+            - "NORMAL"
+            - "HIGH"
+            - "EMERGENCY"
+          default: "NORMAL"
+          example: "NORMAL"
+        justification:
+          type: string
+          description: "Business justification for the request."
+          maxLength: 2000
+          example: "New web server for Enterprise Portal expansion"
+
+    # ========================================================================
+    # Tag Assignment Sub-Schema
+    # ========================================================================
+    TagAssignment:
+      type: object
+      required:
+        - application
+        - tier
+        - environment
+        - compliance
+        - dataClassification
+      description: >
+        NSX-T tag assignments for the VM. Single-value tags are strings,
+        multi-value tags are arrays of strings. All values must exist in
+        the Enterprise Tag Dictionary.
+      properties:
+        application:
+          type: string
+          description: "Application code from the CMDB (single-value)."
+          pattern: "^[A-Z]{2,5}[0-9]{3,5}$"
+          example: "APP001"
+        tier:
+          type: string
+          description: "Deployment tier (single-value)."
+          enum:
+            - "Web"
+            - "Application"
+            - "Database"
+            - "Middleware"
+            - "Utility"
+            - "Shared-Services"
+          example: "Web"
+        environment:
+          type: string
+          description: "Deployment environment (single-value)."
+          enum:
+            - "Production"
+            - "Pre-Production"
+            - "UAT"
+            - "Staging"
+            - "Development"
+            - "Sandbox"
+            - "DR"
+          example: "Production"
+        compliance:
+          type: array
+          description: >
+            Applicable compliance frameworks (multi-value). At least
+            one value required; use ['None'] if no framework applies.
+          items:
+            type: string
+            enum:
+              - "PCI"
+              - "HIPAA"
+              - "SOX"
+              - "None"
+          minItems: 1
+          uniqueItems: true
+          example:
+            - "PCI"
+            - "SOX"
+        dataClassification:
+          type: string
+          description: "Data sensitivity classification (single-value)."
+          enum:
+            - "Public"
+            - "Internal"
+            - "Confidential"
+            - "Restricted"
+          example: "Confidential"
+        costCenter:
+          type: string
+          description: "Financial cost center code (single-value, optional)."
+          pattern: "^CC[0-9]{4,8}$"
+          example: "CC1001"
+
+    # ========================================================================
+    # Response Schemas
+    # ========================================================================
+    DfwLifecycleTriggerResponse:
+      type: object
+      required:
+        - executionId
+        - correlationId
+        - status
+      properties:
+        executionId:
+          type: string
+          description: "Unique vRO workflow execution ID for tracking."
+          format: uuid
+          example: "vro-exec-a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+        correlationId:
+          type: string
+          description: "Echo of the correlation ID from the request."
+          example: "SNOW-REQ-2026-0001234"
+        status:
+          type: string
+          description: "Acceptance status. Always 'ACCEPTED' for 202 responses."
+          enum:
+            - "ACCEPTED"
+          example: "ACCEPTED"
+        estimatedCompletionSeconds:
+          type: integer
+          description: "Estimated time to completion in seconds."
+          example: 120
+        workflowVersion:
+          type: string
+          description: "Version of the DFW lifecycle workflow that will execute."
+          example: "2.1.0"
+        queuePosition:
+          type: integer
+          description: "Position in the execution queue (0 = executing now)."
+          minimum: 0
+          example: 0
+
+    ValidationErrorResponse:
+      type: object
+      required:
+        - status
+        - errorCode
+        - errorMessage
+        - validationErrors
+      properties:
+        status:
+          type: string
+          enum:
+            - "REJECTED"
+          example: "REJECTED"
+        correlationId:
+          type: string
+          description: "Echo of the correlation ID if it was parseable."
+          example: "SNOW-REQ-2026-0001234"
+        errorCode:
+          type: string
+          enum:
+            - "VALIDATION_FAILED"
+          example: "VALIDATION_FAILED"
+        errorMessage:
+          type: string
+          description: "Human-readable summary of the validation failure."
+          example: "Payload validation failed"
+        validationErrors:
+          type: array
+          description: "Detailed list of field-level validation errors."
+          items:
+            type: object
+            required:
+              - field
+              - message
+            properties:
+              field:
+                type: string
+                description: "JSON path to the field that failed validation."
+                example: "tags.compliance"
+              message:
+                type: string
+                description: "Human-readable description of the validation error."
+                example: "Invalid compliance value 'GDPR'. Allowed values: PCI, HIPAA, SOX, None"
+              rejectedValue:
+                type: string
+                description: "The value that was rejected."
+                example: "GDPR"
+
+    ErrorResponse:
+      type: object
+      required:
+        - status
+        - errorCode
+        - errorMessage
+      properties:
+        status:
+          type: string
+          enum:
+            - "ERROR"
+          example: "ERROR"
+        errorCode:
+          type: string
+          description: "Machine-readable error code."
+          example: "UNAUTHORIZED"
+        errorMessage:
+          type: string
+          description: "Human-readable error description."
+          example: "Bearer token is invalid or expired"
+        existingExecutionId:
+          type: string
+          description: "Existing execution ID (present for CONFLICT errors)."

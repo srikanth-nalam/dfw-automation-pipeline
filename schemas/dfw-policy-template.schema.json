@@ -1,0 +1,104 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "dfw-policy-template",
+  "title": "DFW Policy Template Schema",
+  "description": "Validates DFW policy-as-code YAML/JSON definitions for NSX Distributed Firewall rules",
+  "type": "object",
+  "required": ["policy_name", "display_name", "nsx_category", "scope", "priority", "rules"],
+  "properties": {
+    "policy_name": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Unique policy identifier (alphanumeric, hyphens, underscores)"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable policy name"
+    },
+    "nsx_category": {
+      "type": "string",
+      "enum": ["Infrastructure", "Environment", "Application", "Emergency"],
+      "description": "NSX DFW policy category"
+    },
+    "scope": {
+      "type": "string",
+      "pattern": "^(GLOBAL|LOCAL:(NDCNG|TULNG))$",
+      "description": "Policy scope - GLOBAL or LOCAL:{site}"
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000,
+      "description": "Policy priority (lower = higher precedence)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional policy description"
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "display_name", "source_groups", "destination_groups", "services", "action", "direction"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]+$",
+            "description": "Unique rule identifier within the policy"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable rule name"
+          },
+          "source_groups": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Source security groups or ANY"
+          },
+          "destination_groups": {
+            "type": "array",
+            "items": { "type": "string" },
+            "minItems": 1,
+            "description": "Destination security groups or ANY"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(ANY|ICMP|(TCP|UDP)/[0-9]+)$"
+            },
+            "minItems": 1,
+            "description": "Service definitions (protocol/port or ANY)"
+          },
+          "action": {
+            "type": "string",
+            "enum": ["ALLOW", "DROP", "REJECT"],
+            "description": "Rule action"
+          },
+          "direction": {
+            "type": "string",
+            "enum": ["IN", "OUT", "IN_OUT"],
+            "description": "Traffic direction"
+          },
+          "logged": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether rule hits are logged"
+          },
+          "disabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Whether the rule is disabled"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Documentation notes for the rule"
+          }
+        }
+      }
+    }
+  }
+}

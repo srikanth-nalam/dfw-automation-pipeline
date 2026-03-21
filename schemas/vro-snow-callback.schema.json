@@ -1,0 +1,509 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://company.com/schemas/dfw-automation/vro-snow-callback.schema.json",
+  "title": "vRO to SNOW DFW Callback Payload",
+  "description": "JSON Schema for validating the vRealize Orchestrator to ServiceNow DFW lifecycle callback payload. Uses oneOf with a discriminator on the 'status' field to distinguish success, failure, and partial-success callbacks.",
+  "type": "object",
+  "oneOf": [
+    { "$ref": "#/definitions/successCallback" },
+    { "$ref": "#/definitions/failureCallback" },
+    { "$ref": "#/definitions/partialSuccessCallback" }
+  ],
+  "definitions": {
+    "successCallback": {
+      "type": "object",
+      "description": "Success callback payload returned when the DFW lifecycle workflow completes all steps without error.",
+      "required": [
+        "correlationId",
+        "requestType",
+        "status",
+        "timestamp",
+        "executionDurationSeconds",
+        "vm",
+        "appliedTags",
+        "groupMemberships",
+        "activeDFWPolicies",
+        "workflowStepDurations"
+      ],
+      "properties": {
+        "correlationId": {
+          "type": "string",
+          "description": "Correlation ID from the original trigger request. Format: RITM-{number}-{epoch}.",
+          "pattern": "^RITM-[0-9]+-[0-9]+$",
+          "examples": ["RITM-0012345-1711036800000"]
+        },
+        "requestType": {
+          "type": "string",
+          "description": "Echo of the original request type.",
+          "enum": ["day0_provision", "day2_tag_update", "day_n_decommission", "bulk_tag", "legacy_onboard"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Workflow result discriminator. Always 'SUCCESS' for this schema variant.",
+          "const": "SUCCESS"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of workflow completion.",
+          "examples": ["2026-03-21T14:30:00.000Z"]
+        },
+        "executionDurationSeconds": {
+          "type": "integer",
+          "description": "Total workflow execution time in seconds.",
+          "minimum": 0,
+          "examples": [87]
+        },
+        "vm": {
+          "$ref": "#/definitions/vmDetails"
+        },
+        "appliedTags": {
+          "type": "array",
+          "description": "NSX-T tags successfully applied to the VM.",
+          "items": {
+            "$ref": "#/definitions/nsxTag"
+          },
+          "minItems": 1
+        },
+        "groupMemberships": {
+          "type": "array",
+          "description": "NSX-T security group paths the VM is now a member of.",
+          "items": {
+            "type": "string",
+            "description": "Full NSX-T group path.",
+            "pattern": "^/infra/domains/.+/groups/.+$",
+            "examples": ["/infra/domains/default/groups/APP001_Web_Production"]
+          },
+          "minItems": 1
+        },
+        "activeDFWPolicies": {
+          "type": "array",
+          "description": "DFW policies now active and applied to the VM.",
+          "items": {
+            "$ref": "#/definitions/activePolicy"
+          },
+          "minItems": 1
+        },
+        "workflowStepDurations": {
+          "type": "array",
+          "description": "Detailed per-step execution breakdown for performance monitoring.",
+          "items": {
+            "$ref": "#/definitions/workflowStep"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "failureCallback": {
+      "type": "object",
+      "description": "Failure callback payload returned when the DFW lifecycle workflow encounters an unrecoverable error after all retries are exhausted.",
+      "required": [
+        "correlationId",
+        "requestType",
+        "status",
+        "timestamp",
+        "errorCode",
+        "errorCategory",
+        "errorMessage",
+        "failedStep",
+        "retryCount"
+      ],
+      "properties": {
+        "correlationId": {
+          "type": "string",
+          "description": "Correlation ID from the original trigger request.",
+          "pattern": "^RITM-[0-9]+-[0-9]+$",
+          "examples": ["RITM-0009999-1711036800000"]
+        },
+        "requestType": {
+          "type": "string",
+          "description": "Echo of the original request type.",
+          "enum": ["day0_provision", "day2_tag_update", "day_n_decommission", "bulk_tag", "legacy_onboard"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Workflow result discriminator. Always 'FAILURE' for this schema variant.",
+          "const": "FAILURE"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the failure was detected.",
+          "examples": ["2026-03-21T14:45:00.000Z"]
+        },
+        "errorCode": {
+          "type": "string",
+          "description": "Machine-readable DFW error code identifying the specific failure type. Maps to BRD Appendix C error taxonomy.",
+          "pattern": "^DFW-[0-9]{4}$",
+          "examples": ["DFW-5001"]
+        },
+        "errorCategory": {
+          "type": "string",
+          "description": "Broad error category for routing, dashboarding, and escalation logic.",
+          "enum": [
+            "INPUT_VALIDATION",
+            "CONNECTIVITY",
+            "INFRASTRUCTURE",
+            "NSX_API",
+            "VCENTER_API",
+            "TIMEOUT",
+            "INTERNAL"
+          ],
+          "examples": ["NSX_API"]
+        },
+        "errorMessage": {
+          "type": "string",
+          "description": "Human-readable error description with contextual details.",
+          "maxLength": 2000,
+          "examples": ["Failed to apply tag Application=APP002 - NSX Manager returned 503 Service Unavailable"]
+        },
+        "failedStep": {
+          "type": "string",
+          "description": "Workflow step where the failure occurred.",
+          "enum": [
+            "VALIDATE_PAYLOAD",
+            "RESOLVE_ENDPOINTS",
+            "PREPARE",
+            "APPLY_TAGS",
+            "REMOVE_TAGS",
+            "VERIFY_PROPAGATION",
+            "VERIFY_GROUP_MEMBERSHIP",
+            "VERIFY_DFW_POLICIES",
+            "CHECK_DEPENDENCIES",
+            "DEPROVISION_VM",
+            "UPDATE_CMDB",
+            "CALLBACK_DELIVERY"
+          ],
+          "examples": ["APPLY_TAGS"]
+        },
+        "retryCount": {
+          "type": "integer",
+          "description": "Number of retry attempts executed before the workflow gave up.",
+          "minimum": 0,
+          "maximum": 10,
+          "examples": [3]
+        },
+        "compensatingActionTaken": {
+          "type": "string",
+          "description": "Compensating action executed via the SagaCoordinator to maintain system consistency after failure.",
+          "enum": [
+            "ROLLBACK_TAGS",
+            "ROLLBACK_GROUP_MEMBERSHIP",
+            "DELETE_VM",
+            "QUARANTINE_VM",
+            "REVERT_CMDB",
+            "NONE"
+          ],
+          "examples": ["ROLLBACK_TAGS"]
+        },
+        "compensatingActionResult": {
+          "type": "string",
+          "description": "Outcome of the compensating action.",
+          "enum": [
+            "SUCCESS",
+            "PARTIAL",
+            "FAILED",
+            "NOT_APPLICABLE"
+          ],
+          "examples": ["SUCCESS"]
+        },
+        "sagaJournal": {
+          "type": "array",
+          "description": "Saga compensation journal recording the steps that were rolled back.",
+          "items": {
+            "type": "object",
+            "required": ["step", "action", "result"],
+            "properties": {
+              "step": {
+                "type": "string",
+                "description": "Step that was compensated."
+              },
+              "action": {
+                "type": "string",
+                "description": "Compensating action taken."
+              },
+              "result": {
+                "type": "string",
+                "description": "Result of compensation.",
+                "enum": ["SUCCESS", "FAILED"]
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "recommendedAction": {
+          "type": "string",
+          "description": "Suggested next step for the operator or automated retry system.",
+          "maxLength": 2000,
+          "examples": ["Verify NSX Manager cluster health and retry the request"]
+        },
+        "deadLetterQueueEntry": {
+          "$ref": "#/definitions/deadLetterQueueEntry"
+        }
+      },
+      "additionalProperties": false
+    },
+    "partialSuccessCallback": {
+      "type": "object",
+      "description": "Partial success callback returned when some workflow steps succeeded but others failed (e.g., tags applied but group verification timed out).",
+      "required": [
+        "correlationId",
+        "requestType",
+        "status",
+        "timestamp",
+        "completedSteps",
+        "failedSteps",
+        "errorCode",
+        "errorMessage"
+      ],
+      "properties": {
+        "correlationId": {
+          "type": "string",
+          "description": "Correlation ID from the original trigger request.",
+          "pattern": "^RITM-[0-9]+-[0-9]+$"
+        },
+        "requestType": {
+          "type": "string",
+          "enum": ["day0_provision", "day2_tag_update", "day_n_decommission", "bulk_tag", "legacy_onboard"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Workflow result discriminator. Always 'PARTIAL_SUCCESS' for this schema variant.",
+          "const": "PARTIAL_SUCCESS"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when partial success was determined."
+        },
+        "completedSteps": {
+          "type": "array",
+          "description": "Steps that completed successfully.",
+          "items": {
+            "$ref": "#/definitions/workflowStep"
+          }
+        },
+        "failedSteps": {
+          "type": "array",
+          "description": "Steps that failed.",
+          "items": {
+            "$ref": "#/definitions/workflowStep"
+          },
+          "minItems": 1
+        },
+        "errorCode": {
+          "type": "string",
+          "description": "Primary error code for the first failure.",
+          "pattern": "^DFW-[0-9]{4}$"
+        },
+        "errorMessage": {
+          "type": "string",
+          "description": "Human-readable error description.",
+          "maxLength": 2000
+        },
+        "vm": {
+          "$ref": "#/definitions/vmDetails"
+        },
+        "appliedTags": {
+          "type": "array",
+          "description": "Tags that were successfully applied before the failure.",
+          "items": {
+            "$ref": "#/definitions/nsxTag"
+          }
+        },
+        "recommendedAction": {
+          "type": "string",
+          "description": "Suggested next step for remediation.",
+          "maxLength": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "vmDetails": {
+      "type": "object",
+      "description": "Details of the target VM after workflow processing.",
+      "required": ["name", "site"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "VM name in vCenter.",
+          "examples": ["app001-web-prod-01"]
+        },
+        "moRef": {
+          "type": "string",
+          "description": "vCenter Managed Object Reference ID.",
+          "pattern": "^vm-[0-9]+$",
+          "examples": ["vm-12345"]
+        },
+        "uuid": {
+          "type": "string",
+          "format": "uuid",
+          "description": "vCenter VM instance UUID.",
+          "examples": ["4201b4e6-c3a0-4f5a-9e2b-1d3f5a7b9c0e"]
+        },
+        "ipAddress": {
+          "type": "string",
+          "format": "ipv4",
+          "description": "Primary IPv4 address of the VM.",
+          "examples": ["10.100.10.25"]
+        },
+        "powerState": {
+          "type": "string",
+          "description": "Current power state of the VM.",
+          "enum": ["POWERED_ON", "POWERED_OFF", "SUSPENDED"],
+          "examples": ["POWERED_ON"]
+        },
+        "site": {
+          "type": "string",
+          "description": "Physical deployment site code.",
+          "enum": ["NDCNG", "TULNG"],
+          "examples": ["NDCNG"]
+        },
+        "cluster": {
+          "type": "string",
+          "description": "vSphere cluster hosting the VM.",
+          "examples": ["NDCNG-PROD-CL01"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "nsxTag": {
+      "type": "object",
+      "description": "An NSX-T tag with scope (category) and value.",
+      "required": ["scope", "tag"],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "description": "NSX-T tag scope (category name).",
+          "examples": ["Application"]
+        },
+        "tag": {
+          "type": "string",
+          "description": "NSX-T tag value.",
+          "examples": ["APP001"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "activePolicy": {
+      "type": "object",
+      "description": "A DFW policy actively applied to the VM.",
+      "required": ["policyName", "category", "ruleCount"],
+      "properties": {
+        "policyName": {
+          "type": "string",
+          "description": "DFW policy display name.",
+          "examples": ["APP001-Application-Policy"]
+        },
+        "category": {
+          "type": "string",
+          "description": "NSX-T DFW rule category.",
+          "enum": ["Emergency", "Infrastructure", "Environment", "Application"],
+          "examples": ["Application"]
+        },
+        "ruleCount": {
+          "type": "integer",
+          "description": "Number of active rules in this policy affecting the VM.",
+          "minimum": 0,
+          "examples": [4]
+        }
+      },
+      "additionalProperties": false
+    },
+    "workflowStep": {
+      "type": "object",
+      "description": "Execution details for a single workflow step.",
+      "required": ["step", "durationSeconds", "status"],
+      "properties": {
+        "step": {
+          "type": "string",
+          "description": "Workflow step identifier.",
+          "enum": [
+            "VALIDATE_PAYLOAD",
+            "RESOLVE_ENDPOINTS",
+            "PREPARE",
+            "APPLY_TAGS",
+            "REMOVE_TAGS",
+            "VERIFY_PROPAGATION",
+            "VERIFY_GROUP_MEMBERSHIP",
+            "VERIFY_DFW_POLICIES",
+            "CHECK_DEPENDENCIES",
+            "DEPROVISION_VM",
+            "UPDATE_CMDB",
+            "CALLBACK_DELIVERY"
+          ],
+          "examples": ["APPLY_TAGS"]
+        },
+        "durationSeconds": {
+          "type": "integer",
+          "description": "Step execution duration in seconds.",
+          "minimum": 0,
+          "examples": [15]
+        },
+        "status": {
+          "type": "string",
+          "description": "Step execution outcome.",
+          "enum": ["SUCCESS", "FAILED", "SKIPPED"],
+          "examples": ["SUCCESS"]
+        },
+        "errorDetail": {
+          "type": "string",
+          "description": "Error detail if step failed.",
+          "maxLength": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "deadLetterQueueEntry": {
+      "type": "object",
+      "description": "Dead letter queue entry for failed requests eligible for retry.",
+      "required": [
+        "queueName",
+        "messageId",
+        "enqueuedAt",
+        "retryEligible"
+      ],
+      "properties": {
+        "queueName": {
+          "type": "string",
+          "description": "Name of the dead letter queue.",
+          "examples": ["dfw-lifecycle-dlq"]
+        },
+        "messageId": {
+          "type": "string",
+          "description": "Unique message identifier in the DLQ.",
+          "examples": ["dlq-msg-f1e2d3c4-b5a6-7890-1234-567890abcdef"]
+        },
+        "enqueuedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the message was enqueued.",
+          "examples": ["2026-03-21T14:45:01.000Z"]
+        },
+        "retryEligible": {
+          "type": "boolean",
+          "description": "Whether the message is eligible for automatic retry.",
+          "examples": [true]
+        },
+        "maxRetries": {
+          "type": "integer",
+          "description": "Maximum number of configured retry attempts.",
+          "minimum": 0,
+          "examples": [5]
+        },
+        "nextRetryAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Scheduled time for the next retry attempt.",
+          "examples": ["2026-03-21T15:00:00.000Z"]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

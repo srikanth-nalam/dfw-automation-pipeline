@@ -1,0 +1,617 @@
+---
+openapi: "3.0.3"
+
+info:
+  title: "vRO to SNOW DFW Callback API"
+  version: "1.0.0"
+  description: >
+    REST API endpoint on ServiceNow that vRealize Orchestrator calls to
+    report the result of a DFW lifecycle workflow execution. Supports both
+    success callbacks (with full details of applied tags, groups, and
+    policies) and failure callbacks (with error details, compensating
+    actions, and dead letter queue entries).
+  contact:
+    name: "Platform Automation Team"
+    email: "platform-automation@company.com"
+  license:
+    name: "Proprietary"
+
+servers:
+  - url: "https://snow.company.com"
+    description: "Production ServiceNow instance"
+  - url: "https://snow-preprod.company.com"
+    description: "Pre-Production ServiceNow instance"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: "DFW Callback"
+    description: "DFW lifecycle workflow callback from vRO"
+
+paths:
+  /api/now/v1/dfw/callback:
+    post:
+      operationId: "dfwLifecycleCallback"
+      summary: "DFW Lifecycle Workflow Callback"
+      description: >
+        Receives the result of a DFW lifecycle workflow execution from
+        vRO. The payload is either a success result (with applied tags,
+        group memberships, and active policies) or a failure result (with
+        error details, compensating actions, and dead letter queue entry).
+        ServiceNow uses this callback to update the originating request
+        ticket and trigger downstream notifications.
+      tags:
+        - "DFW Callback"
+      requestBody:
+        required: true
+        description: "Workflow execution result — success or failure"
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DfwCallbackPayload"
+            examples:
+              success:
+                summary: "Successful Day 0 provisioning"
+                value:
+                  correlationId: "SNOW-REQ-2026-0001234"
+                  requestType: "DAY0_PROVISION"
+                  status: "SUCCESS"
+                  timestamp: "2026-03-21T14:30:00.000Z"
+                  executionDurationSeconds: 87
+                  vm:
+                    name: "app001-web-prod-01"
+                    moRef: "vm-12345"
+                    uuid: "4201b4e6-c3a0-4f5a-9e2b-1d3f5a7b9c0e"
+                    ipAddress: "10.100.10.25"
+                    powerState: "POWERED_ON"
+                    site: "NDCNG"
+                    cluster: "NDCNG-PROD-CL01"
+                  appliedTags:
+                    - scope: "Application"
+                      tag: "APP001"
+                    - scope: "Tier"
+                      tag: "Web"
+                    - scope: "Environment"
+                      tag: "Production"
+                    - scope: "Compliance"
+                      tag: "PCI"
+                    - scope: "Compliance"
+                      tag: "SOX"
+                    - scope: "DataClassification"
+                      tag: "Confidential"
+                    - scope: "CostCenter"
+                      tag: "CC1001"
+                  groupMemberships:
+                    - "/infra/domains/default/groups/APP001_Web_Production"
+                    - "/infra/domains/default/groups/All-Production-VMs"
+                    - "/infra/domains/default/groups/All-Web-Tier-VMs"
+                    - "/infra/domains/default/groups/All-PCI-VMs"
+                    - "/infra/domains/default/groups/All-SOX-VMs"
+                    - "/infra/domains/default/groups/All-Confidential-Data-VMs"
+                  activeDFWPolicies:
+                    - policyName: "Shared-Services-Infrastructure-Policy"
+                      category: "Infrastructure"
+                      ruleCount: 6
+                    - policyName: "Environment-Zone-Isolation-Policy"
+                      category: "Environment"
+                      ruleCount: 3
+                    - policyName: "APP001-Application-Policy"
+                      category: "Application"
+                      ruleCount: 4
+                  workflowStepDurations:
+                    - step: "VALIDATE_PAYLOAD"
+                      durationSeconds: 2
+                      status: "SUCCESS"
+                    - step: "RESOLVE_VM"
+                      durationSeconds: 5
+                      status: "SUCCESS"
+                    - step: "APPLY_TAGS"
+                      durationSeconds: 15
+                      status: "SUCCESS"
+                    - step: "VERIFY_GROUP_MEMBERSHIP"
+                      durationSeconds: 30
+                      status: "SUCCESS"
+                    - step: "VERIFY_DFW_POLICIES"
+                      durationSeconds: 25
+                      status: "SUCCESS"
+                    - step: "RUN_CONNECTIVITY_TEST"
+                      durationSeconds: 10
+                      status: "SUCCESS"
+              failure:
+                summary: "Failed provisioning with compensating action"
+                value:
+                  correlationId: "SNOW-REQ-2026-0009999"
+                  requestType: "DAY0_PROVISION"
+                  status: "FAILURE"
+                  timestamp: "2026-03-21T14:45:00.000Z"
+                  errorCode: "NSX_TAG_APPLY_FAILED"
+                  errorCategory: "NSX_API_ERROR"
+                  errorMessage: "Failed to apply tag Application=APP002 — NSX Manager returned 503 Service Unavailable"
+                  failedStep: "APPLY_TAGS"
+                  retryCount: 3
+                  compensatingActionTaken: "ROLLBACK_TAGS"
+                  compensatingActionResult: "SUCCESS"
+                  recommendedAction: "Verify NSX Manager cluster health and retry the request"
+                  deadLetterQueueEntry:
+                    queueName: "dfw-lifecycle-dlq"
+                    messageId: "dlq-msg-f1e2d3c4-b5a6-7890-1234-567890abcdef"
+                    enqueuedAt: "2026-03-21T14:45:01.000Z"
+                    retryEligible: true
+                    maxRetries: 5
+                    nextRetryAt: "2026-03-21T15:00:00.000Z"
+      responses:
+        "200":
+          description: "Callback received and processed successfully."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallbackAcknowledgement"
+              example:
+                correlationId: "SNOW-REQ-2026-0001234"
+                status: "ACKNOWLEDGED"
+                ticketUpdated: true
+                ticketNumber: "RITM0012345"
+        "400":
+          description: "Invalid callback payload."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "INVALID_PAYLOAD"
+                errorMessage: "Missing required field: correlationId"
+        "401":
+          description: "Unauthorized — invalid or expired callback token."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "UNAUTHORIZED"
+                errorMessage: "Callback token is invalid or expired"
+        "404":
+          description: "Correlation ID not found in ServiceNow."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "CORRELATION_NOT_FOUND"
+                errorMessage: "No request found for correlationId SNOW-REQ-2026-0001234"
+        "500":
+          description: "Internal server error."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        Short-lived JWT callback token provided in the original trigger
+        request. Scoped to the specific correlation ID.
+
+  schemas:
+    # ========================================================================
+    # Callback Payload — oneOf success/failure
+    # ========================================================================
+    DfwCallbackPayload:
+      description: >
+        DFW lifecycle workflow callback payload. Discriminated by the
+        'status' field: SUCCESS payloads include VM details, tags, groups,
+        and policies; FAILURE payloads include error details, compensating
+        actions, and dead letter queue entries.
+      oneOf:
+        - $ref: "#/components/schemas/SuccessCallback"
+        - $ref: "#/components/schemas/FailureCallback"
+      discriminator:
+        propertyName: "status"
+        mapping:
+          SUCCESS: "#/components/schemas/SuccessCallback"
+          FAILURE: "#/components/schemas/FailureCallback"
+
+    # ========================================================================
+    # Success Callback
+    # ========================================================================
+    SuccessCallback:
+      type: object
+      required:
+        - correlationId
+        - requestType
+        - status
+        - timestamp
+        - executionDurationSeconds
+        - vm
+        - appliedTags
+        - groupMemberships
+        - activeDFWPolicies
+        - workflowStepDurations
+      properties:
+        correlationId:
+          type: string
+          description: "Correlation ID from the original trigger request."
+          example: "SNOW-REQ-2026-0001234"
+        requestType:
+          type: string
+          description: "Echo of the request type."
+          enum:
+            - "DAY0_PROVISION"
+            - "DAY2_RETAG"
+            - "DAY2_DECOMMISSION"
+          example: "DAY0_PROVISION"
+        status:
+          type: string
+          description: "Workflow execution result — always SUCCESS for this schema."
+          enum:
+            - "SUCCESS"
+          example: "SUCCESS"
+        timestamp:
+          type: string
+          format: date-time
+          description: "ISO 8601 timestamp of workflow completion."
+          example: "2026-03-21T14:30:00.000Z"
+        executionDurationSeconds:
+          type: integer
+          description: "Total workflow execution time in seconds."
+          minimum: 0
+          example: 87
+        vm:
+          $ref: "#/components/schemas/VmDetails"
+        appliedTags:
+          type: array
+          description: "List of NSX-T tags successfully applied to the VM."
+          items:
+            $ref: "#/components/schemas/NsxTag"
+          minItems: 1
+        groupMemberships:
+          type: array
+          description: "NSX-T security group paths the VM is now a member of."
+          items:
+            type: string
+            description: "NSX-T group path."
+            example: "/infra/domains/default/groups/APP001_Web_Production"
+          minItems: 1
+        activeDFWPolicies:
+          type: array
+          description: "DFW policies now active for the VM."
+          items:
+            $ref: "#/components/schemas/ActivePolicy"
+          minItems: 1
+        workflowStepDurations:
+          type: array
+          description: >
+            Detailed breakdown of each workflow step with duration and
+            individual status. Used for performance monitoring and SLA
+            compliance tracking.
+          items:
+            $ref: "#/components/schemas/WorkflowStep"
+
+    # ========================================================================
+    # Failure Callback
+    # ========================================================================
+    FailureCallback:
+      type: object
+      required:
+        - correlationId
+        - requestType
+        - status
+        - timestamp
+        - errorCode
+        - errorCategory
+        - errorMessage
+        - failedStep
+        - retryCount
+      properties:
+        correlationId:
+          type: string
+          description: "Correlation ID from the original trigger request."
+          example: "SNOW-REQ-2026-0009999"
+        requestType:
+          type: string
+          description: "Echo of the request type."
+          enum:
+            - "DAY0_PROVISION"
+            - "DAY2_RETAG"
+            - "DAY2_DECOMMISSION"
+          example: "DAY0_PROVISION"
+        status:
+          type: string
+          description: "Workflow execution result — always FAILURE for this schema."
+          enum:
+            - "FAILURE"
+          example: "FAILURE"
+        timestamp:
+          type: string
+          format: date-time
+          description: "ISO 8601 timestamp of failure detection."
+          example: "2026-03-21T14:45:00.000Z"
+        errorCode:
+          type: string
+          description: >
+            Machine-readable error code identifying the specific failure.
+          enum:
+            - "VALIDATION_FAILED"
+            - "VM_NOT_FOUND"
+            - "VM_POWERED_OFF"
+            - "NSX_TAG_APPLY_FAILED"
+            - "NSX_GROUP_MEMBERSHIP_FAILED"
+            - "NSX_POLICY_VERIFICATION_FAILED"
+            - "NSX_MANAGER_UNREACHABLE"
+            - "VCENTER_UNREACHABLE"
+            - "TAG_DICTIONARY_LOOKUP_FAILED"
+            - "CALLBACK_DELIVERY_FAILED"
+            - "TIMEOUT"
+            - "UNKNOWN_ERROR"
+          example: "NSX_TAG_APPLY_FAILED"
+        errorCategory:
+          type: string
+          description: >
+            Broad error category for routing and escalation.
+          enum:
+            - "VALIDATION_ERROR"
+            - "NSX_API_ERROR"
+            - "VCENTER_API_ERROR"
+            - "CONNECTIVITY_ERROR"
+            - "TIMEOUT_ERROR"
+            - "INTERNAL_ERROR"
+          example: "NSX_API_ERROR"
+        errorMessage:
+          type: string
+          description: "Human-readable error description with context."
+          example: "Failed to apply tag Application=APP002 — NSX Manager returned 503 Service Unavailable"
+          maxLength: 2000
+        failedStep:
+          type: string
+          description: "Workflow step where the failure occurred."
+          enum:
+            - "VALIDATE_PAYLOAD"
+            - "TAG_DICTIONARY_LOOKUP"
+            - "RESOLVE_VM"
+            - "APPLY_TAGS"
+            - "VERIFY_GROUP_MEMBERSHIP"
+            - "VERIFY_DFW_POLICIES"
+            - "RUN_CONNECTIVITY_TEST"
+            - "CALLBACK_DELIVERY"
+          example: "APPLY_TAGS"
+        retryCount:
+          type: integer
+          description: "Number of retry attempts made before giving up."
+          minimum: 0
+          maximum: 10
+          example: 3
+        compensatingActionTaken:
+          type: string
+          description: >
+            Compensating action executed to maintain consistency after
+            failure. Null if no compensating action was needed.
+          enum:
+            - "ROLLBACK_TAGS"
+            - "ROLLBACK_GROUP_MEMBERSHIP"
+            - "QUARANTINE_VM"
+            - "NONE"
+          example: "ROLLBACK_TAGS"
+        compensatingActionResult:
+          type: string
+          description: "Result of the compensating action."
+          enum:
+            - "SUCCESS"
+            - "PARTIAL"
+            - "FAILED"
+            - "NOT_APPLICABLE"
+          example: "SUCCESS"
+        recommendedAction:
+          type: string
+          description: >
+            Suggested next step for the operator or automated retry
+            system.
+          example: "Verify NSX Manager cluster health and retry the request"
+          maxLength: 2000
+        deadLetterQueueEntry:
+          $ref: "#/components/schemas/DeadLetterQueueEntry"
+
+    # ========================================================================
+    # Sub-Schemas
+    # ========================================================================
+    VmDetails:
+      type: object
+      required:
+        - name
+        - site
+      properties:
+        name:
+          type: string
+          description: "VM name in vCenter."
+          example: "app001-web-prod-01"
+        moRef:
+          type: string
+          description: "vCenter Managed Object Reference."
+          example: "vm-12345"
+        uuid:
+          type: string
+          format: uuid
+          description: "vCenter VM instance UUID."
+          example: "4201b4e6-c3a0-4f5a-9e2b-1d3f5a7b9c0e"
+        ipAddress:
+          type: string
+          format: ipv4
+          description: "Primary IP address of the VM."
+          example: "10.100.10.25"
+        powerState:
+          type: string
+          description: "Current power state of the VM."
+          enum:
+            - "POWERED_ON"
+            - "POWERED_OFF"
+            - "SUSPENDED"
+          example: "POWERED_ON"
+        site:
+          type: string
+          description: "Deployment site code."
+          enum:
+            - "NDCNG"
+            - "NDCRS"
+            - "NDCDR"
+          example: "NDCNG"
+        cluster:
+          type: string
+          description: "vSphere cluster hosting the VM."
+          example: "NDCNG-PROD-CL01"
+
+    NsxTag:
+      type: object
+      required:
+        - scope
+        - tag
+      properties:
+        scope:
+          type: string
+          description: "NSX-T tag scope (category)."
+          example: "Application"
+        tag:
+          type: string
+          description: "NSX-T tag value."
+          example: "APP001"
+
+    ActivePolicy:
+      type: object
+      required:
+        - policyName
+        - category
+        - ruleCount
+      properties:
+        policyName:
+          type: string
+          description: "DFW policy name."
+          example: "APP001-Application-Policy"
+        category:
+          type: string
+          description: "NSX-T DFW category."
+          enum:
+            - "Emergency"
+            - "Infrastructure"
+            - "Environment"
+            - "Application"
+          example: "Application"
+        ruleCount:
+          type: integer
+          description: "Number of active rules in this policy for the VM."
+          minimum: 0
+          example: 4
+
+    WorkflowStep:
+      type: object
+      required:
+        - step
+        - durationSeconds
+        - status
+      properties:
+        step:
+          type: string
+          description: "Workflow step identifier."
+          enum:
+            - "VALIDATE_PAYLOAD"
+            - "TAG_DICTIONARY_LOOKUP"
+            - "RESOLVE_VM"
+            - "APPLY_TAGS"
+            - "VERIFY_GROUP_MEMBERSHIP"
+            - "VERIFY_DFW_POLICIES"
+            - "RUN_CONNECTIVITY_TEST"
+            - "CALLBACK_DELIVERY"
+          example: "APPLY_TAGS"
+        durationSeconds:
+          type: integer
+          description: "Step execution duration in seconds."
+          minimum: 0
+          example: 15
+        status:
+          type: string
+          description: "Step execution result."
+          enum:
+            - "SUCCESS"
+            - "FAILED"
+            - "SKIPPED"
+          example: "SUCCESS"
+
+    DeadLetterQueueEntry:
+      type: object
+      required:
+        - queueName
+        - messageId
+        - enqueuedAt
+        - retryEligible
+      properties:
+        queueName:
+          type: string
+          description: "Name of the dead letter queue."
+          example: "dfw-lifecycle-dlq"
+        messageId:
+          type: string
+          description: "Unique message identifier in the DLQ."
+          example: "dlq-msg-f1e2d3c4-b5a6-7890-1234-567890abcdef"
+        enqueuedAt:
+          type: string
+          format: date-time
+          description: "Timestamp when the message was enqueued."
+          example: "2026-03-21T14:45:01.000Z"
+        retryEligible:
+          type: boolean
+          description: "Whether the message is eligible for automatic retry."
+          example: true
+        maxRetries:
+          type: integer
+          description: "Maximum number of retry attempts configured."
+          minimum: 0
+          example: 5
+        nextRetryAt:
+          type: string
+          format: date-time
+          description: "Scheduled time for the next retry attempt."
+          example: "2026-03-21T15:00:00.000Z"
+
+    # ========================================================================
+    # Response Schemas
+    # ========================================================================
+    CallbackAcknowledgement:
+      type: object
+      required:
+        - correlationId
+        - status
+      properties:
+        correlationId:
+          type: string
+          description: "Echo of the correlation ID."
+          example: "SNOW-REQ-2026-0001234"
+        status:
+          type: string
+          description: "Acknowledgement status."
+          enum:
+            - "ACKNOWLEDGED"
+          example: "ACKNOWLEDGED"
+        ticketUpdated:
+          type: boolean
+          description: "Whether the ServiceNow ticket was updated."
+          example: true
+        ticketNumber:
+          type: string
+          description: "ServiceNow RITM number that was updated."
+          example: "RITM0012345"
+
+    ErrorResponse:
+      type: object
+      required:
+        - errorCode
+        - errorMessage
+      properties:
+        errorCode:
+          type: string
+          description: "Machine-readable error code."
+          example: "INVALID_PAYLOAD"
+        errorMessage:
+          type: string
+          description: "Human-readable error description."
+          example: "Missing required field: correlationId"

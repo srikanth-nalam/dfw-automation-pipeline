@@ -1,0 +1,262 @@
+---
+# ============================================================================
+# NSX Tag Categories — Enterprise Tag Dictionary
+# ============================================================================
+# Purpose: Defines the authoritative tag taxonomy used across all NSX-T
+#          environments. Tags drive dynamic security group membership, DFW
+#          rule evaluation, compliance scoping, and cost allocation.
+# ============================================================================
+
+metadata:
+  owner: "Enterprise Architecture / Network Security Team"
+  brd_reference: "Section 4.2 — Tag Taxonomy and Governance"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 90
+  governance_notes: >
+    All tag categories and values are centrally managed through the Enterprise
+    Tag Dictionary in ServiceNow. Changes require approval from the Tag
+    Governance Board (TGB). Unauthorized tag values applied to VMs will be
+    flagged by the compliance drift scanner and auto-remediated within 24 hours.
+
+categories:
+  # --------------------------------------------------------------------------
+  # Application
+  # --------------------------------------------------------------------------
+  - category_name: "Application"
+    display_name: "Application Code"
+    description: >
+      Identifies the application that owns the VM. The value is the
+      registered application code from the enterprise CMDB (e.g., APP001,
+      APP002). Every VM must have exactly one Application tag to ensure
+      proper micro-segmentation group membership and cost allocation.
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "Application"
+    validation:
+      pattern: "^[A-Z]{2,5}[0-9]{3,5}$"
+      description: "2-5 uppercase letters followed by 3-5 digits"
+      examples:
+        - "APP001"
+        - "WEB002"
+        - "DB003"
+    governance:
+      approval_required: false
+      auto_registered: true
+      source_of_truth: "ServiceNow CMDB — Application Portfolio"
+    notes: >
+      Application codes are registered during the application onboarding
+      process. The code is immutable once assigned. Decommissioned
+      application codes are retired but never reused.
+
+  # --------------------------------------------------------------------------
+  # Tier
+  # --------------------------------------------------------------------------
+  - category_name: "Tier"
+    display_name: "Deployment Tier"
+    description: >
+      Identifies the architectural tier of the VM within its application
+      stack. Used to enforce micro-segmentation rules that control
+      inter-tier communication (e.g., web-to-app, app-to-database).
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "Tier"
+    allowed_values:
+      - value: "Web"
+        description: "Front-end web servers, reverse proxies, and static content servers"
+        typical_ports: [80, 443]
+      - value: "Application"
+        description: "Business logic servers, API gateways, and middleware"
+        typical_ports: [8080, 8443]
+      - value: "Database"
+        description: "Relational databases, NoSQL stores, and data warehouses"
+        typical_ports: [1521, 5432, 3306, 1433, 27017]
+      - value: "Middleware"
+        description: "Message queues, ESBs, and integration platforms"
+        typical_ports: [5672, 61616, 9092]
+      - value: "Utility"
+        description: "Infrastructure utilities: jump hosts, bastion servers, automation runners"
+        typical_ports: [22, 3389, 5985]
+      - value: "Shared-Services"
+        description: "Cross-cutting services: DNS, NTP, LDAP, monitoring, backup"
+        typical_ports: [53, 123, 389, 636]
+    governance:
+      approval_required: false
+      auto_registered: false
+      source_of_truth: "Enterprise Architecture — Tier Taxonomy"
+    notes: >
+      Each VM belongs to exactly one tier. Multi-function VMs must be
+      decomposed or assigned to the highest-privilege tier they serve.
+
+  # --------------------------------------------------------------------------
+  # Environment
+  # --------------------------------------------------------------------------
+  - category_name: "Environment"
+    display_name: "Deployment Environment"
+    description: >
+      Identifies the lifecycle environment of the VM. Drives zone
+      isolation rules that prevent cross-environment communication
+      (e.g., Production to Development). The environment tag is the
+      primary control for compliance-mandated environment separation.
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "Environment"
+    allowed_values:
+      - value: "Production"
+        description: "Live production workloads serving end users"
+        zone_trust_level: "HIGH"
+        change_control_required: true
+      - value: "Pre-Production"
+        description: "Final staging before production — mirrors production config"
+        zone_trust_level: "MEDIUM-HIGH"
+        change_control_required: true
+      - value: "UAT"
+        description: "User acceptance testing — business validation"
+        zone_trust_level: "MEDIUM"
+        change_control_required: false
+      - value: "Staging"
+        description: "Integration testing and release candidate validation"
+        zone_trust_level: "MEDIUM"
+        change_control_required: false
+      - value: "Development"
+        description: "Active development and unit testing"
+        zone_trust_level: "LOW"
+        change_control_required: false
+      - value: "Sandbox"
+        description: "Experimental and proof-of-concept workloads"
+        zone_trust_level: "LOW"
+        change_control_required: false
+      - value: "DR"
+        description: "Disaster recovery replicas — mirrors production"
+        zone_trust_level: "HIGH"
+        change_control_required: true
+    governance:
+      approval_required: false
+      auto_registered: false
+      source_of_truth: "ITSM — Environment Registry"
+    notes: >
+      DR environments inherit the same DFW policies as Production.
+      Environment promotion (e.g., Staging to Production) requires
+      re-tagging and triggers automatic DFW policy re-evaluation.
+
+  # --------------------------------------------------------------------------
+  # Compliance
+  # --------------------------------------------------------------------------
+  - category_name: "Compliance"
+    display_name: "Compliance Framework"
+    description: >
+      Identifies the regulatory compliance frameworks applicable to the
+      VM. A VM may be subject to multiple frameworks simultaneously
+      (e.g., both PCI and SOX). Compliance tags drive audit scope
+      definitions, enhanced logging, and encryption requirements.
+    cardinality: "multi-value"
+    required: true
+    nsx_scope: "Compliance"
+    allowed_values:
+      - value: "PCI"
+        description: "Payment Card Industry Data Security Standard (PCI DSS v4.0)"
+        requirements:
+          - "Network segmentation (Req 1.3)"
+          - "Encryption in transit (Req 4.1)"
+          - "Access logging (Req 10)"
+          - "Quarterly segmentation testing"
+      - value: "HIPAA"
+        description: "Health Insurance Portability and Accountability Act"
+        requirements:
+          - "Access controls (§164.312(a)(1))"
+          - "Audit controls (§164.312(b))"
+          - "Transmission security (§164.312(e)(1))"
+          - "Encryption (§164.312(a)(2)(iv))"
+      - value: "SOX"
+        description: "Sarbanes-Oxley Act — IT General Controls"
+        requirements:
+          - "Logical access controls (Section 404)"
+          - "Change management"
+          - "Segregation of duties"
+          - "Audit trail retention (7 years)"
+      - value: "None"
+        description: "No specific compliance framework applies"
+        requirements: []
+    governance:
+      approval_required: true
+      approver_role: "Compliance Officer"
+      auto_registered: false
+      source_of_truth: "GRC Platform — Compliance Registry"
+    notes: >
+      The Compliance tag value 'None' must be explicitly assigned — it is
+      not the default. VMs without any Compliance tag will be flagged by
+      the drift scanner as non-compliant.
+
+  # --------------------------------------------------------------------------
+  # DataClassification
+  # --------------------------------------------------------------------------
+  - category_name: "DataClassification"
+    display_name: "Data Classification Level"
+    description: >
+      Identifies the sensitivity level of data processed or stored by the
+      VM. Drives encryption requirements, DLP policies, access control
+      stringency, and data handling procedures. Classification follows
+      the enterprise data governance framework.
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "DataClassification"
+    allowed_values:
+      - value: "Public"
+        description: "Data intended for public consumption — no sensitivity"
+        encryption_in_transit: false
+        encryption_at_rest: false
+        dlp_enabled: false
+        access_review_cadence_days: 365
+      - value: "Internal"
+        description: "Internal-use data — not for external distribution"
+        encryption_in_transit: true
+        encryption_at_rest: false
+        dlp_enabled: false
+        access_review_cadence_days: 180
+      - value: "Confidential"
+        description: "Sensitive business data — PII, financial records, trade secrets"
+        encryption_in_transit: true
+        encryption_at_rest: true
+        dlp_enabled: true
+        access_review_cadence_days: 90
+      - value: "Restricted"
+        description: "Highest sensitivity — regulated data (ePHI, PAN, classified)"
+        encryption_in_transit: true
+        encryption_at_rest: true
+        dlp_enabled: true
+        access_review_cadence_days: 30
+    governance:
+      approval_required: true
+      approver_role: "Data Governance Officer"
+      auto_registered: false
+      source_of_truth: "Data Governance Platform — Classification Registry"
+    notes: >
+      Restricted data VMs require additional controls: privileged access
+      management (PAM), continuous monitoring, and quarterly access
+      certification. Downgrading from Restricted requires Data Governance
+      Board approval.
+
+  # --------------------------------------------------------------------------
+  # CostCenter
+  # --------------------------------------------------------------------------
+  - category_name: "CostCenter"
+    display_name: "Cost Center"
+    description: >
+      Associates the VM with a financial cost center for chargeback and
+      showback reporting. Optional but recommended for all workloads.
+      Does not affect DFW policy evaluation.
+    cardinality: "single-value"
+    required: false
+    nsx_scope: "CostCenter"
+    validation:
+      pattern: "^CC[0-9]{4,8}$"
+      description: "CC prefix followed by 4-8 digits"
+      examples:
+        - "CC1001"
+        - "CC50042300"
+    governance:
+      approval_required: false
+      auto_registered: true
+      source_of_truth: "Finance — Cost Center Registry"
+    notes: >
+      VMs without a CostCenter tag will be allocated to the default
+      IT overhead cost center (CC9999) for chargeback purposes.

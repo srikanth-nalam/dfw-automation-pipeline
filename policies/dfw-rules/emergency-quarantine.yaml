@@ -1,0 +1,170 @@
+---
+# ============================================================================
+# DFW Policy: Emergency Quarantine
+# Source: BRD Appendix D.4 — Emergency Quarantine Rules
+# ============================================================================
+# Purpose: Provides an immediate-response quarantine mechanism for
+#          compromised or suspicious VMs. Evaluated at the Emergency
+#          category (highest priority) so it overrides all other DFW rules.
+#          Management jump-host access is preserved for incident response.
+# ============================================================================
+
+policy_name: "Emergency-Quarantine-Policy"
+display_name: "Emergency Quarantine Isolation Rules"
+description: >
+  Emergency quarantine policy applied to VMs tagged for isolation during
+  security incidents. Blocks all network traffic except management access
+  from authorized jump hosts and ICMP monitoring. This policy is evaluated
+  at the Emergency category (priority 100) ensuring it takes precedence
+  over all Infrastructure, Environment, and Application rules.
+
+nsx_category: "Emergency"
+scope: "GLOBAL"
+priority: 100
+locked: true
+stateful: true
+
+metadata:
+  owner: "Security Operations Center (SOC)"
+  brd_reference: "Appendix D.4"
+  change_control: "Emergency — SOC authorized"
+  last_reviewed: "2026-03-01"
+  review_cadence_days: 30
+  compliance_tags:
+    - "PCI"
+    - "HIPAA"
+    - "SOX"
+  activation_method: "Automated via SOC playbook or manual tag assignment"
+  sla_activation_time_seconds: 30
+  notes: >
+    This policy is activated by applying the tag Quarantine=Active to
+    the target VM. The tag triggers automatic group membership in
+    Quarantined-VMs, which activates these rules immediately.
+
+rules:
+  # --------------------------------------------------------------------------
+  # Allow Management SSH from Jump Hosts
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-Mgmt-Jump-Host-SSH"
+    display_name: "Allow SSH from Jump Hosts to Quarantined VMs"
+    description: >
+      Permits SSH (TCP/22) access from authorized management jump hosts to
+      quarantined VMs. Enables incident responders to perform forensic
+      analysis, collect evidence, and remediate compromised systems
+      without removing quarantine isolation.
+    action: "ALLOW"
+    direction: "IN"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "QUARANTINE-MGMT-SSH"
+    disabled: false
+    sequence_number: 10
+    source_groups:
+      - "/infra/domains/default/groups/Management-Jump-Hosts"
+    destination_groups:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 22
+    applied_to:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    tag: "Emergency"
+    notes: >
+      All SSH sessions to quarantined VMs must be recorded in the
+      privileged access management (PAM) system. Session recordings are
+      retained for 12 months per incident response policy.
+
+  # --------------------------------------------------------------------------
+  # Allow Management RDP from Jump Hosts
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-Mgmt-Jump-Host-RDP"
+    display_name: "Allow RDP from Jump Hosts to Quarantined VMs"
+    description: >
+      Permits RDP (TCP/3389) access from authorized management jump hosts
+      to quarantined Windows VMs. Enables incident responders to perform
+      GUI-based forensic analysis and remediation on Windows workloads.
+    action: "ALLOW"
+    direction: "IN"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "QUARANTINE-MGMT-RDP"
+    disabled: false
+    sequence_number: 20
+    source_groups:
+      - "/infra/domains/default/groups/Management-Jump-Hosts"
+    destination_groups:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    services:
+      - protocol: "TCP"
+        destination_ports:
+          - 3389
+    applied_to:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    tag: "Emergency"
+    notes: >
+      RDP sessions require MFA via the PAM gateway. NLA (Network Level
+      Authentication) must be enforced on all Windows targets.
+
+  # --------------------------------------------------------------------------
+  # Allow Monitoring ICMP
+  # --------------------------------------------------------------------------
+  - rule_name: "Allow-Monitoring-ICMP"
+    display_name: "Allow ICMP from Monitoring to Quarantined VMs"
+    description: >
+      Permits ICMP (ping) from monitoring infrastructure to quarantined
+      VMs. Ensures the SOC can verify the VM is still powered on and
+      network-reachable during the quarantine period without exposing
+      any application-level services.
+    action: "ALLOW"
+    direction: "IN"
+    ip_protocol: "IPV4_IPV6"
+    logged: false
+    disabled: false
+    sequence_number: 30
+    source_groups:
+      - "/infra/domains/default/groups/Monitoring-Servers"
+    destination_groups:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    services:
+      - protocol: "ICMPv4"
+        icmp_type: 8
+        icmp_code: 0
+      - protocol: "ICMPv6"
+        icmp_type: 128
+        icmp_code: 0
+    applied_to:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    tag: "Emergency"
+    notes: "ICMP only — no application-layer monitoring permitted during quarantine."
+
+  # --------------------------------------------------------------------------
+  # Quarantine Block All
+  # --------------------------------------------------------------------------
+  - rule_name: "Quarantine-Block-All"
+    display_name: "Block All Traffic to/from Quarantined VMs"
+    description: >
+      Drops and logs all remaining traffic to and from quarantined VMs.
+      This is the catch-all deny rule that enforces complete network
+      isolation after the management and monitoring exceptions above.
+      Every dropped packet is logged to the SIEM for forensic analysis.
+    action: "DROP"
+    direction: "IN_OUT"
+    ip_protocol: "IPV4_IPV6"
+    logged: true
+    log_label: "QUARANTINE-BLOCK-ALL"
+    disabled: false
+    sequence_number: 9999
+    source_groups:
+      - "ANY"
+    destination_groups:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    services:
+      - "ANY"
+    applied_to:
+      - "/infra/domains/default/groups/Quarantined-VMs"
+    tag: "Emergency"
+    notes: >
+      This rule MUST remain last. All blocked connections are forwarded to
+      SIEM for correlation with the active incident ticket. Alert
+      threshold: >1000 drops/min triggers P1 escalation.

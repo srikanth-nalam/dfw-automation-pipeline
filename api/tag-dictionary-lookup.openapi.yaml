@@ -1,0 +1,715 @@
+---
+openapi: "3.0.3"
+
+info:
+  title: "Enterprise Tag Dictionary CRUD API"
+  version: "1.0.0"
+  description: >
+    CRUD API for managing the Enterprise Tag Dictionary in ServiceNow.
+    The Tag Dictionary is the authoritative source of truth for all NSX-T
+    tag categories and values used by the DFW automation pipeline. vRO
+    workflows consult this API during Day 0/Day 2 operations to validate
+    tag assignments before applying them to VMs.
+  contact:
+    name: "Platform Automation Team"
+    email: "platform-automation@company.com"
+  license:
+    name: "Proprietary"
+
+servers:
+  - url: "https://snow.company.com"
+    description: "Production ServiceNow instance"
+  - url: "https://snow-preprod.company.com"
+    description: "Pre-Production ServiceNow instance"
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: "Tag Dictionary"
+    description: "Enterprise Tag Dictionary management"
+
+paths:
+  # ==========================================================================
+  # List Values for a Category
+  # ==========================================================================
+  /api/now/v1/tag-dictionary/{category}:
+    get:
+      operationId: "listTagValues"
+      summary: "List Tag Values by Category"
+      description: >
+        Returns all tag values registered under the specified category.
+        Supports filtering by active status and pagination. Results are
+        sorted alphabetically by value.
+      tags:
+        - "Tag Dictionary"
+      parameters:
+        - name: category
+          in: path
+          required: true
+          description: "Tag category name."
+          schema:
+            type: string
+            enum:
+              - "Application"
+              - "Tier"
+              - "Environment"
+              - "Compliance"
+              - "DataClassification"
+              - "CostCenter"
+          example: "Tier"
+        - name: isActive
+          in: query
+          required: false
+          description: "Filter by active status. Omit to return all."
+          schema:
+            type: boolean
+          example: true
+        - name: limit
+          in: query
+          required: false
+          description: "Maximum number of results to return."
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+          example: 100
+        - name: offset
+          in: query
+          required: false
+          description: "Number of results to skip for pagination."
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          example: 0
+      responses:
+        "200":
+          description: "List of tag values for the category."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagValueListResponse"
+              example:
+                category: "Tier"
+                totalCount: 6
+                limit: 100
+                offset: 0
+                values:
+                  - value: "Application"
+                    description: "Business logic servers, API gateways, and middleware"
+                    nsxTagKey: "Tier"
+                    isActive: true
+                    createdAt: "2025-01-15T10:00:00.000Z"
+                    updatedAt: "2026-01-10T08:00:00.000Z"
+                  - value: "Database"
+                    description: "Relational databases, NoSQL stores, and data warehouses"
+                    nsxTagKey: "Tier"
+                    isActive: true
+                    createdAt: "2025-01-15T10:00:00.000Z"
+                    updatedAt: "2026-01-10T08:00:00.000Z"
+                  - value: "Middleware"
+                    description: "Message queues, ESBs, and integration platforms"
+                    nsxTagKey: "Tier"
+                    isActive: true
+                    createdAt: "2025-01-15T10:00:00.000Z"
+                    updatedAt: "2026-01-10T08:00:00.000Z"
+                  - value: "Shared-Services"
+                    description: "Cross-cutting services: DNS, NTP, LDAP, monitoring, backup"
+                    nsxTagKey: "Tier"
+                    isActive: true
+                    createdAt: "2025-01-15T10:00:00.000Z"
+                    updatedAt: "2026-01-10T08:00:00.000Z"
+                  - value: "Utility"
+                    description: "Infrastructure utilities: jump hosts, bastion servers"
+                    nsxTagKey: "Tier"
+                    isActive: true
+                    createdAt: "2025-01-15T10:00:00.000Z"
+                    updatedAt: "2026-01-10T08:00:00.000Z"
+                  - value: "Web"
+                    description: "Front-end web servers, reverse proxies, static content"
+                    nsxTagKey: "Tier"
+                    isActive: true
+                    createdAt: "2025-01-15T10:00:00.000Z"
+                    updatedAt: "2026-01-10T08:00:00.000Z"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Category not found."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "CATEGORY_NOT_FOUND"
+                errorMessage: "Tag category 'InvalidCategory' does not exist"
+
+  # ==========================================================================
+  # Get Metadata for a Specific Value
+  # ==========================================================================
+  /api/now/v1/tag-dictionary/{category}/{value}:
+    get:
+      operationId: "getTagValue"
+      summary: "Get Tag Value Metadata"
+      description: >
+        Returns the full metadata for a specific tag value within a
+        category, including description, applicability constraints,
+        approval requirements, and audit trail.
+      tags:
+        - "Tag Dictionary"
+      parameters:
+        - name: category
+          in: path
+          required: true
+          description: "Tag category name."
+          schema:
+            type: string
+          example: "Environment"
+        - name: value
+          in: path
+          required: true
+          description: "Tag value within the category."
+          schema:
+            type: string
+          example: "Production"
+      responses:
+        "200":
+          description: "Tag value metadata."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagDictionaryEntry"
+              example:
+                category: "Environment"
+                value: "Production"
+                nsxTagKey: "Environment"
+                description: "Live production workloads serving end users"
+                isActive: true
+                applicableEnvironments: []
+                applicableTiers:
+                  - "Web"
+                  - "Application"
+                  - "Database"
+                  - "Middleware"
+                  - "Utility"
+                  - "Shared-Services"
+                requiresApproval: false
+                approverRole: null
+                createdAt: "2025-01-15T10:00:00.000Z"
+                createdBy: "admin@company.com"
+                updatedAt: "2026-01-10T08:00:00.000Z"
+                updatedBy: "platform-admin@company.com"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Category or value not found."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "VALUE_NOT_FOUND"
+                errorMessage: "Tag value 'InvalidValue' does not exist in category 'Environment'"
+
+    # ========================================================================
+    # Update a Tag Value
+    # ========================================================================
+    patch:
+      operationId: "updateTagValue"
+      summary: "Update Tag Value Metadata"
+      description: >
+        Partially updates the metadata of an existing tag dictionary
+        entry. Only provided fields are updated; omitted fields retain
+        their current values.
+      tags:
+        - "Tag Dictionary"
+      parameters:
+        - name: category
+          in: path
+          required: true
+          description: "Tag category name."
+          schema:
+            type: string
+          example: "Environment"
+        - name: value
+          in: path
+          required: true
+          description: "Tag value to update."
+          schema:
+            type: string
+          example: "Production"
+      requestBody:
+        required: true
+        description: "Fields to update."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagDictionaryUpdateRequest"
+            example:
+              description: "Live production workloads — updated description"
+              requiresApproval: true
+              approverRole: "Change Advisory Board"
+      responses:
+        "200":
+          description: "Updated tag value metadata."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagDictionaryEntry"
+        "400":
+          description: "Invalid update payload."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Category or value not found."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    # ========================================================================
+    # Deactivate (Soft Delete) a Tag Value
+    # ========================================================================
+    delete:
+      operationId: "deactivateTagValue"
+      summary: "Deactivate Tag Value"
+      description: >
+        Soft-deletes a tag dictionary entry by setting isActive to false.
+        Deactivated values are no longer valid for new tag assignments but
+        remain in the dictionary for historical reference. VMs with the
+        deactivated tag are flagged by the compliance drift scanner.
+      tags:
+        - "Tag Dictionary"
+      parameters:
+        - name: category
+          in: path
+          required: true
+          description: "Tag category name."
+          schema:
+            type: string
+          example: "Environment"
+        - name: value
+          in: path
+          required: true
+          description: "Tag value to deactivate."
+          schema:
+            type: string
+          example: "Sandbox"
+      responses:
+        "200":
+          description: "Tag value deactivated."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagDictionaryEntry"
+              example:
+                category: "Environment"
+                value: "Sandbox"
+                nsxTagKey: "Environment"
+                description: "Experimental and proof-of-concept workloads"
+                isActive: false
+                deactivatedAt: "2026-03-21T14:00:00.000Z"
+                deactivatedBy: "admin@company.com"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: "Category or value not found."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >
+            Conflict — active VMs are still using this tag value.
+            Deactivation is blocked until all VMs are re-tagged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "TAG_IN_USE"
+                errorMessage: "Cannot deactivate: 42 active VMs are tagged with Environment=Sandbox"
+                affectedVmCount: 42
+
+  # ==========================================================================
+  # Create a New Tag Dictionary Entry
+  # ==========================================================================
+  /api/now/v1/tag-dictionary:
+    post:
+      operationId: "createTagValue"
+      summary: "Create Tag Dictionary Entry"
+      description: >
+        Registers a new tag value in the Enterprise Tag Dictionary. The
+        value becomes immediately available for tag assignments in the
+        DFW lifecycle workflow. Category must already exist — this
+        endpoint does not create new categories.
+      tags:
+        - "Tag Dictionary"
+      requestBody:
+        required: true
+        description: "New tag dictionary entry."
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TagDictionaryCreateRequest"
+            examples:
+              new-environment:
+                summary: "Add a new environment value"
+                value:
+                  category: "Environment"
+                  value: "Performance-Test"
+                  nsxTagKey: "Environment"
+                  description: "Dedicated performance and load testing environment"
+                  isActive: true
+                  applicableEnvironments: []
+                  applicableTiers:
+                    - "Web"
+                    - "Application"
+                    - "Database"
+                  requiresApproval: false
+              new-application:
+                summary: "Register a new application code"
+                value:
+                  category: "Application"
+                  value: "APP042"
+                  nsxTagKey: "Application"
+                  description: "Customer Loyalty Platform"
+                  isActive: true
+                  applicableEnvironments:
+                    - "Production"
+                    - "Pre-Production"
+                    - "UAT"
+                    - "Development"
+                  applicableTiers:
+                    - "Web"
+                    - "Application"
+                    - "Database"
+                  requiresApproval: false
+      responses:
+        "201":
+          description: "Tag dictionary entry created."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TagDictionaryEntry"
+        "400":
+          description: "Invalid request payload."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "VALIDATION_FAILED"
+                errorMessage: "Field 'category' must reference an existing tag category"
+        "401":
+          description: "Unauthorized."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: "Conflict — value already exists in the specified category."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                errorCode: "DUPLICATE_VALUE"
+                errorMessage: "Tag value 'Production' already exists in category 'Environment'"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        JWT bearer token with 'tag-dictionary:read' scope for GET
+        operations and 'tag-dictionary:write' scope for POST, PATCH,
+        and DELETE operations.
+
+  schemas:
+    # ========================================================================
+    # Tag Dictionary Entry (Full)
+    # ========================================================================
+    TagDictionaryEntry:
+      type: object
+      required:
+        - category
+        - value
+        - nsxTagKey
+        - description
+        - isActive
+      properties:
+        category:
+          type: string
+          description: "Tag category this value belongs to."
+          example: "Environment"
+        value:
+          type: string
+          description: "The tag value."
+          example: "Production"
+          maxLength: 128
+        nsxTagKey:
+          type: string
+          description: >
+            The NSX-T tag scope/key that this dictionary entry maps to.
+            Typically matches the category name.
+          example: "Environment"
+          maxLength: 128
+        description:
+          type: string
+          description: "Human-readable description of this tag value."
+          example: "Live production workloads serving end users"
+          maxLength: 1000
+        isActive:
+          type: boolean
+          description: >
+            Whether this tag value is currently active and available for
+            new assignments. Deactivated values are retained for history.
+          example: true
+        applicableEnvironments:
+          type: array
+          description: >
+            Environments where this tag value may be used. Empty array
+            means all environments. Primarily used to restrict Application
+            and Compliance tags to specific environments.
+          items:
+            type: string
+          example:
+            - "Production"
+            - "Pre-Production"
+        applicableTiers:
+          type: array
+          description: >
+            Tiers where this tag value may be used. Empty array means
+            all tiers.
+          items:
+            type: string
+          example:
+            - "Web"
+            - "Application"
+            - "Database"
+        requiresApproval:
+          type: boolean
+          description: >
+            Whether assigning this tag value requires additional approval
+            beyond the standard RITM workflow.
+          example: false
+        approverRole:
+          type: string
+          description: "Role required to approve assignment of this tag value."
+          example: "Compliance Officer"
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          description: "ISO 8601 timestamp when the entry was created."
+          example: "2025-01-15T10:00:00.000Z"
+        createdBy:
+          type: string
+          description: "Email of the user who created the entry."
+          example: "admin@company.com"
+        updatedAt:
+          type: string
+          format: date-time
+          description: "ISO 8601 timestamp of the last update."
+          example: "2026-01-10T08:00:00.000Z"
+        updatedBy:
+          type: string
+          description: "Email of the user who last updated the entry."
+          example: "platform-admin@company.com"
+        deactivatedAt:
+          type: string
+          format: date-time
+          description: "ISO 8601 timestamp when the entry was deactivated."
+          nullable: true
+        deactivatedBy:
+          type: string
+          description: "Email of the user who deactivated the entry."
+          nullable: true
+
+    # ========================================================================
+    # Create Request
+    # ========================================================================
+    TagDictionaryCreateRequest:
+      type: object
+      required:
+        - category
+        - value
+        - nsxTagKey
+        - description
+      properties:
+        category:
+          type: string
+          description: "Existing tag category to add the value to."
+          example: "Environment"
+        value:
+          type: string
+          description: "New tag value to register."
+          example: "Performance-Test"
+          maxLength: 128
+        nsxTagKey:
+          type: string
+          description: "NSX-T tag scope/key mapping."
+          example: "Environment"
+          maxLength: 128
+        description:
+          type: string
+          description: "Human-readable description."
+          example: "Dedicated performance and load testing environment"
+          maxLength: 1000
+        isActive:
+          type: boolean
+          description: "Set to false to create an inactive entry."
+          default: true
+        applicableEnvironments:
+          type: array
+          description: "Limit usage to specific environments."
+          items:
+            type: string
+          default: []
+        applicableTiers:
+          type: array
+          description: "Limit usage to specific tiers."
+          items:
+            type: string
+          default: []
+        requiresApproval:
+          type: boolean
+          description: "Whether assignment requires extra approval."
+          default: false
+        approverRole:
+          type: string
+          description: "Role required for approval (if requiresApproval is true)."
+          nullable: true
+
+    # ========================================================================
+    # Update Request (Partial)
+    # ========================================================================
+    TagDictionaryUpdateRequest:
+      type: object
+      description: "Partial update — only provided fields are modified."
+      properties:
+        description:
+          type: string
+          description: "Updated description."
+          maxLength: 1000
+        isActive:
+          type: boolean
+          description: "Update active status."
+        applicableEnvironments:
+          type: array
+          description: "Update environment applicability."
+          items:
+            type: string
+        applicableTiers:
+          type: array
+          description: "Update tier applicability."
+          items:
+            type: string
+        requiresApproval:
+          type: boolean
+          description: "Update approval requirement."
+        approverRole:
+          type: string
+          description: "Update approver role."
+          nullable: true
+
+    # ========================================================================
+    # List Response
+    # ========================================================================
+    TagValueListResponse:
+      type: object
+      required:
+        - category
+        - totalCount
+        - values
+      properties:
+        category:
+          type: string
+          description: "The queried category."
+          example: "Tier"
+        totalCount:
+          type: integer
+          description: "Total number of values in the category (before pagination)."
+          example: 6
+        limit:
+          type: integer
+          description: "Page size."
+          example: 100
+        offset:
+          type: integer
+          description: "Current offset."
+          example: 0
+        values:
+          type: array
+          description: "Tag values with summary metadata."
+          items:
+            type: object
+            required:
+              - value
+              - description
+              - nsxTagKey
+              - isActive
+            properties:
+              value:
+                type: string
+                example: "Web"
+              description:
+                type: string
+                example: "Front-end web servers, reverse proxies"
+              nsxTagKey:
+                type: string
+                example: "Tier"
+              isActive:
+                type: boolean
+                example: true
+              createdAt:
+                type: string
+                format: date-time
+              updatedAt:
+                type: string
+                format: date-time
+
+    # ========================================================================
+    # Error Response
+    # ========================================================================
+    ErrorResponse:
+      type: object
+      required:
+        - errorCode
+        - errorMessage
+      properties:
+        errorCode:
+          type: string
+          description: "Machine-readable error code."
+          example: "CATEGORY_NOT_FOUND"
+        errorMessage:
+          type: string
+          description: "Human-readable error description."
+          example: "Tag category 'InvalidCategory' does not exist"
+        affectedVmCount:
+          type: integer
+          description: "Number of affected VMs (for TAG_IN_USE errors)."
