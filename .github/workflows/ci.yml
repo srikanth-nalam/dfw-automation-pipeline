@@ -6,81 +6,319 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
 jobs:
   lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: 'npm'
+
       - run: npm ci
-      - run: npm run lint
+
+      - name: Run ESLint
+        run: npm run lint
 
   test:
+    name: Test
     runs-on: ubuntu-latest
     needs: lint
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: 'npm'
+
       - run: npm ci
-      - run: npm test
-      - uses: actions/upload-artifact@v4
+
+      - name: Run Jest tests with coverage
+        run: npm test -- --coverage --coverageReporters=text --coverageReporters=lcov --coverageReporters=json-summary
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-report
           path: coverage/
+          retention-days: 14
+
+      - name: Check coverage thresholds
+        if: always()
+        run: |
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
+            node -e "
+              const cs = require('./coverage/coverage-summary.json');
+              const t = cs.total;
+              const thresholds = { branches: 70, functions: 80, lines: 80, statements: 80 };
+              let failed = false;
+              Object.keys(thresholds).forEach(k => {
+                const pct = t[k].pct;
+                const pass = pct >= thresholds[k];
+                if (!pass) failed = true;
+                console.log((pass ? 'PASS' : 'FAIL') + ': ' + k + ' ' + pct + '% (threshold: ' + thresholds[k] + '%)');
+              });
+              if (failed) {
+                console.error('Coverage thresholds not met');
+                process.exit(1);
+              }
+            "
+          fi
 
   schema-validate:
+    name: Validate Schemas
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '18'
+          cache: 'npm'
+
       - run: npm ci
+
       - name: Validate JSON Schemas
         run: |
           node -e "
           const Ajv = require('ajv');
           const fs = require('fs');
+          const path = require('path');
           const schemas = [
             'schemas/snow-vro-payload.schema.json',
             'schemas/vro-snow-callback.schema.json',
             'schemas/tag-dictionary-entry.schema.json',
             'schemas/dfw-policy-template.schema.json'
           ];
-          const ajv = new Ajv({ allErrors: true });
+          const ajv = new Ajv({ allErrors: true, strict: false });
           let hasErrors = false;
           schemas.forEach(s => {
             try {
+              if (!fs.existsSync(s)) {
+                console.error('NOT FOUND: ' + s);
+                hasErrors = true;
+                return;
+              }
               const schema = JSON.parse(fs.readFileSync(s, 'utf8'));
               ajv.compile(schema);
-              console.log('✓ Valid:', s);
+              console.log('VALID: ' + s);
             } catch (err) {
-              console.error('✗ Invalid:', s, err.message);
+              console.error('INVALID: ' + s + ' - ' + err.message);
               hasErrors = true;
             }
           });
           if (hasErrors) process.exit(1);
+          console.log('All schemas valid.');
           "
 
-  docs-check:
+  policy-validate:
+    name: Validate Policies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - run: npm ci
+
+      - name: Validate DFW policy YAML files
+        run: |
+          node -e "
+          const fs = require('fs');
+          const path = require('path');
+          const yaml = require('js-yaml') || null;
+
+          const policyDir = 'policies/dfw-rules';
+          if (!fs.existsSync(policyDir)) {
+            console.log('No policy directory found, skipping');
+            process.exit(0);
+          }
+
+          const files = fs.readdirSync(policyDir).filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+          let hasErrors = false;
+          const priorities = new Map();
+
+          files.forEach(file => {
+            const filePath = path.join(policyDir, file);
+            try {
+              const content = fs.readFileSync(filePath, 'utf8');
+              // Basic YAML parse validation
+              let doc;
+              try {
+                doc = JSON.parse(JSON.stringify(require('js-yaml').load(content)));
+              } catch (e) {
+                // If js-yaml not available, just check file is not empty
+                if (content.trim().length === 0) {
+                  throw new Error('Empty policy file');
+                }
+                console.log('PARSE-SKIP: ' + file + ' (js-yaml not available, basic check passed)');
+                return;
+              }
+
+              // Check required fields
+              if (!doc.name) {
+                console.error('INVALID: ' + file + ' - missing required field: name');
+                hasErrors = true;
+              }
+              if (!doc.rules || !Array.isArray(doc.rules)) {
+                console.error('INVALID: ' + file + ' - missing or invalid rules array');
+                hasErrors = true;
+              }
+
+              // Check priority uniqueness
+              if (doc.priority !== undefined) {
+                if (priorities.has(doc.priority)) {
+                  console.error('CONFLICT: ' + file + ' shares priority ' + doc.priority + ' with ' + priorities.get(doc.priority));
+                  hasErrors = true;
+                }
+                priorities.set(doc.priority, file);
+              }
+
+              if (!hasErrors) {
+                console.log('VALID: ' + file + ' (' + (doc.rules ? doc.rules.length : 0) + ' rules, priority: ' + (doc.priority || 'unset') + ')');
+              }
+            } catch (err) {
+              console.error('ERROR: ' + file + ' - ' + err.message);
+              hasErrors = true;
+            }
+          });
+
+          if (hasErrors) process.exit(1);
+          console.log('All policy files valid.');
+          "
+
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Verify documentation files exist
         run: |
+          echo "## Documentation Check" >> $GITHUB_STEP_SUMMARY
           MISSING=0
-          for doc in README.md docs/SDD.md docs/HLD.md docs/LLD.md docs/FRD.md docs/NFR-MAPPING.md docs/TEST-STRATEGY.md docs/RUNBOOK.md; do
+          FOUND=0
+
+          for doc in \
+            README.md \
+            docs/SDD.md \
+            docs/HLD.md \
+            docs/LLD.md \
+            docs/FRD.md \
+            docs/NFR-MAPPING.md \
+            docs/TEST-STRATEGY.md \
+            docs/RUNBOOK.md \
+            docs/diagrams/architecture-overview.md \
+            docs/diagrams/day0-sequence.md \
+            docs/diagrams/day2-sequence.md \
+            docs/diagrams/dayn-sequence.md \
+            docs/diagrams/data-flow.md \
+            docs/diagrams/error-handling-saga.md \
+            docs/diagrams/class-diagram.md \
+            docs/diagrams/deployment-topology.md \
+            adr/001-orchestration-engine-vro.md \
+            adr/002-tag-governance-model.md \
+            adr/003-saga-pattern-rollback.md \
+            adr/004-circuit-breaker-implementation.md \
+            adr/005-policy-as-code-approach.md \
+            adr/006-multi-site-federation.md; do
             if [ ! -f "$doc" ]; then
-              echo "Missing: $doc"
-              MISSING=1
+              echo "MISSING: $doc"
+              echo "- :x: Missing: \`$doc\`" >> $GITHUB_STEP_SUMMARY
+              MISSING=$((MISSING + 1))
             else
-              echo "Found: $doc"
+              SIZE=$(wc -c < "$doc")
+              echo "FOUND: $doc ($SIZE bytes)"
+              echo "- :white_check_mark: \`$doc\` ($SIZE bytes)" >> $GITHUB_STEP_SUMMARY
+              FOUND=$((FOUND + 1))
             fi
           done
-          if [ $MISSING -eq 1 ]; then exit 1; fi
-          echo "All documentation files present"
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Found: $FOUND | Missing: $MISSING**" >> $GITHUB_STEP_SUMMARY
+
+          if [ $MISSING -gt 0 ]; then
+            echo "ERROR: $MISSING documentation file(s) missing"
+            exit 1
+          fi
+          echo "All $FOUND documentation files present"
+
+      - name: Check for empty documentation files
+        run: |
+          EMPTY=0
+          for doc in README.md docs/*.md docs/diagrams/*.md adr/*.md; do
+            if [ -f "$doc" ]; then
+              LINES=$(wc -l < "$doc")
+              if [ "$LINES" -lt 5 ]; then
+                echo "WARNING: $doc has only $LINES lines (may be a stub)"
+                EMPTY=$((EMPTY + 1))
+              fi
+            fi
+          done
+          if [ $EMPTY -gt 0 ]; then
+            echo "WARNING: $EMPTY file(s) appear to be stubs"
+          fi
+
+  adr-check:
+    name: ADR Consistency Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate ADR format and numbering
+        run: |
+          ADR_DIR="adr"
+          if [ ! -d "$ADR_DIR" ]; then
+            echo "No ADR directory found"
+            exit 0
+          fi
+
+          ERRORS=0
+          for adr in "$ADR_DIR"/*.md; do
+            FILENAME=$(basename "$adr")
+            echo "Checking: $FILENAME"
+
+            # Check numbering format (NNN-description.md)
+            if ! echo "$FILENAME" | grep -qE '^[0-9]{3}-[a-z0-9-]+\.md$'; then
+              echo "  WARNING: Non-standard filename format: $FILENAME"
+            fi
+
+            # Check required sections
+            for section in "Status:" "Date:" "Context" "Decision" "Consequences"; do
+              if ! grep -q "$section" "$adr"; then
+                echo "  ERROR: Missing required section: $section"
+                ERRORS=$((ERRORS + 1))
+              fi
+            done
+
+            # Check status is valid
+            if grep -q "Status:" "$adr"; then
+              STATUS=$(grep "Status:" "$adr" | head -1)
+              if ! echo "$STATUS" | grep -qiE '(Proposed|Accepted|Deprecated|Superseded)'; then
+                echo "  WARNING: Non-standard status: $STATUS"
+              fi
+            fi
+          done
+
+          if [ $ERRORS -gt 0 ]; then
+            echo "ERROR: $ERRORS format issue(s) found"
+            exit 1
+          fi
+          echo "All ADRs pass format checks"

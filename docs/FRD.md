@@ -8,123 +8,344 @@
 
 ---
 
-## Traceability Matrix
+## Table of Contents
 
-The following table maps each functional requirement to its implementing design component, source file, test case, and acceptance criteria. Requirements are organized by functional area and reference the BRD requirement IDs FR-001 through FR-065.
-
----
-
-### FR-001 through FR-010: ServiceNow Catalog Form Enhancements
-
-| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
-|-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-001 | Catalog form shall display tag categories as dropdown fields populated from the Tag Dictionary | ServiceNow Client Script | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-001 | All six tag categories (Application, Tier, Environment, DataClassification, Compliance, CostCenter) render as form fields on load |
-| FR-002 | DataClassification field shall default to "Internal" when the form loads | ServiceNow Client Script — `_setDefaultFieldValues()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-002 | DataClassification field value is "Internal" after onLoad completes when no prior value exists |
-| FR-003 | Compliance field shall default to "None" when the form loads | ServiceNow Client Script — `_setDefaultFieldValues()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-003 | Compliance field value is "None" after onLoad completes when no prior value exists |
-| FR-004 | CostCenter field shall be auto-populated from the user's department record | ServiceNow Client Script — `_populateCostCenter()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-004 | CostCenter is populated via GlideAjax lookup and set to read-only on success |
-| FR-005 | CostCenter field shall fall back to user preference if department lookup fails | ServiceNow Client Script — `_populateCostCenter()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-005 | CostCenter populated from g_user.getPreference when available, set read-only |
-| FR-006 | Application, Tier, Environment, DataClassification fields shall be mandatory | ServiceNow Client Script — `_initializeFormState()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-006 | All four fields have mandatory flag set to true on form load |
-| FR-007 | Compliance field shall be conditionally mandatory based on Tier selection | ServiceNow Client Script — onChange handler | `src/servicenow/catalog/client-scripts/vmBuildRequest_onChange.js` | TC-007 | Compliance becomes mandatory when Tier is "Web" or "App" in Production |
-| FR-008 | Production environment selection shall display a warning banner | ServiceNow Client Script — onChange handler | `src/servicenow/catalog/client-scripts/vmBuildRequest_onChange.js` | TC-008 | Production warning banner element is shown when Environment = Production |
-| FR-009 | Form shall validate tag combinations before submission | ServiceNow Business Rule / Client Script | `src/servicenow/catalog/client-scripts/vmBuildRequest_onSubmit.js` | TC-009 | PCI + Sandbox combination is rejected with user-facing error message |
-| FR-010 | Form shall generate a JSON payload with RITM, tags, VM identifier, and site code | ServiceNow REST Message | ServiceNow REST Message configuration | TC-010 | Payload contains all required fields and is valid JSON |
+1. [Overview](#1-overview)
+2. [Requirement Traceability Methodology](#2-requirement-traceability-methodology)
+3. [FR-001 through FR-010: ServiceNow Catalog Form Enhancements](#3-fr-001-through-fr-010-servicenow-catalog-form-enhancements)
+4. [FR-011 through FR-020: Tag Cardinality and Operations](#4-fr-011-through-fr-020-tag-cardinality-and-operations)
+5. [FR-021 through FR-030: Pipeline Orchestration and Configuration](#5-fr-021-through-fr-030-pipeline-orchestration-and-configuration)
+6. [FR-031 through FR-040: DFW Policy Validation and Conflict Detection](#6-fr-031-through-fr-040-dfw-policy-validation-and-conflict-detection)
+7. [FR-041 through FR-050: Error Handling, Retry, and Circuit Breaker](#7-fr-041-through-fr-050-error-handling-retry-and-circuit-breaker)
+8. [FR-051 through FR-060: Logging, Observability, and Compliance](#8-fr-051-through-fr-060-logging-observability-and-compliance)
+9. [FR-061 through FR-065: Policy-as-Code and Schema Validation](#9-fr-061-through-fr-065-policy-as-code-and-schema-validation)
+10. [Cross-Cutting Traceability Summary](#10-cross-cutting-traceability-summary)
 
 ---
 
-### FR-011 through FR-020: Tag Management and Cardinality
+## 1. Overview
 
-| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
-|-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-011 | Tag categories shall enforce single-value cardinality for Application, Tier, Environment, DataClassification, CostCenter | TagCardinalityEnforcer — `enforceCardinality()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-011 | Applying a new single-value tag replaces the existing value for that category |
-| FR-012 | Compliance category shall enforce multi-value cardinality allowing multiple simultaneous values | TagCardinalityEnforcer — `_mergeMultiValue()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-012 | Multiple Compliance values (e.g., PCI + HIPAA) coexist after merge |
-| FR-013 | Compliance value "None" shall be mutually exclusive with other compliance values | TagCardinalityEnforcer — `_mergeMultiValue()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-013 | Setting "None" removes all other compliance values; adding a real value removes "None" |
-| FR-014 | Tag operations shall follow idempotent read-compare-write pattern | TagOperations — `applyTags()` | `src/vro/actions/tags/TagOperations.js` | TC-014 | Calling applyTags twice with same desired state produces no second PATCH call |
-| FR-015 | Tag delta computation shall identify minimal add/remove operations | TagCardinalityEnforcer — `computeDelta()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-015 | Delta contains only changed tags, not the full tag set |
-| FR-016 | PCI compliance shall be rejected in Sandbox environments | TagCardinalityEnforcer — `validateTagCombinations()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-016 | Validation returns {valid: false} with PCI/Sandbox conflict error |
-| FR-017 | HIPAA compliance shall be rejected in Sandbox environments | TagCardinalityEnforcer — `validateTagCombinations()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-017 | Validation returns {valid: false} with HIPAA/Sandbox conflict error |
-| FR-018 | Confidential data classification shall require a compliance tag other than "None" | TagCardinalityEnforcer — `validateTagCombinations()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-018 | Validation returns {valid: false} when DataClassification=Confidential and Compliance=[None] |
-| FR-019 | Tag update operations shall preserve unchanged categories | TagOperations — `updateTags()` | `src/vro/actions/tags/TagOperations.js` | TC-019 | Updating Application tag preserves existing Tier, Environment, etc. |
-| FR-020 | Tag removal shall accept a list of categories to remove | TagOperations — `removeTags()` | `src/vro/actions/tags/TagOperations.js` | TC-020 | Only specified categories are removed; others are preserved |
+This Functional Requirements Design document provides a comprehensive traceability matrix mapping all 65 functional requirements (FR-001 through FR-065) from the Business Requirements Document (BRD) to their implementing design components, source files, test cases, and acceptance criteria. Each requirement is traceable from business need through implementation to verification.
 
----
+The requirements are organized into nine functional areas that align with the pipeline's module architecture:
 
-### FR-021 through FR-030: vRO Orchestration and Lifecycle
-
-| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
-|-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-021 | Pipeline shall generate a unique correlation ID for each execution | CorrelationContext — `create()` | `src/vro/actions/shared/CorrelationContext.js` | TC-021 | Correlation ID matches format RITM-{number}-{timestamp} |
-| FR-022 | Correlation ID shall be propagated in all HTTP request headers | CorrelationContext — `getHeaders()` | `src/vro/actions/shared/CorrelationContext.js` | TC-022 | X-Correlation-ID header present in all outbound REST calls |
-| FR-023 | Day 0 provisioning shall apply tags, update groups, and verify DFW coverage | LifecycleOrchestrator — `executeDay0()` | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-023 | All three steps execute in order and saga records each step |
-| FR-024 | Day 2 updates shall use read-compare-write for tag modifications | TagOperations — `updateTags()` | `src/vro/actions/tags/TagOperations.js` | TC-024 | Current tags are read before computing delta; only changes are written |
-| FR-025 | Day N decommission shall remove all tags and verify DFW rule removal | LifecycleOrchestrator — `executeDayN()` | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-025 | All tags removed; DFW validation confirms no active rules |
-| FR-026 | Pipeline shall resolve site-specific endpoints from configuration | ConfigLoader — `getEndpointsForSite()` | `src/vro/actions/shared/ConfigLoader.js` | TC-026 | Correct URLs returned for NDCNG and TULNG site codes |
-| FR-027 | Invalid site codes shall produce a DFW-4004 error | ConfigLoader — `getEndpointsForSite()` | `src/vro/actions/shared/ConfigLoader.js` | TC-027 | Error thrown with code DFW-4004 for unknown site values |
-| FR-028 | Pipeline shall support configuration overrides at construction time | ConfigLoader constructor | `src/vro/actions/shared/ConfigLoader.js` | TC-028 | Override values take precedence over defaults |
-| FR-029 | Pipeline shall send a callback to ServiceNow with operation results | LifecycleOrchestrator — `_sendCallback()` | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-029 | Callback payload includes RITM, status, summary, errors, timestamp |
-| FR-030 | Callback failures shall be retried with configurable intervals | RetryHandler wrapping callback | `src/vro/actions/shared/RetryHandler.js` | TC-030 | Failed callbacks retried at [2s, 5s, 10s] intervals |
+- **ServiceNow Catalog Form** (FR-001 to FR-010): Client-side form behavior, defaults, validation, and dynamic field filtering
+- **Tag Cardinality and Operations** (FR-011 to FR-020): Cardinality enforcement, conflict detection, idempotent tag CRUD, and delta computation
+- **Pipeline Orchestration and Configuration** (FR-021 to FR-030): Correlation ID management, lifecycle orchestration (Day 0/2/N), site resolution, and configuration loading
+- **DFW Policy Validation and Conflict Detection** (FR-031 to FR-040): DFW coverage verification, orphaned rule detection, rule conflict analysis, and policy reconciliation
+- **Error Handling, Retry, and Circuit Breaker** (FR-041 to FR-050): Structured error taxonomy, retry with exponential backoff, circuit breaker state machine, and saga compensation
+- **Logging, Observability, and Compliance** (FR-051 to FR-060): Structured JSON logging, log level filtering, error enrichment, safe serialization, and audit trail
+- **Policy-as-Code and Schema Validation** (FR-061 to FR-065): YAML policy definitions, JSON Schema validation, CI integration, and schema-driven payload verification
 
 ---
 
-### FR-031 through FR-040: Security Groups and DFW
+## 2. Requirement Traceability Methodology
 
-| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
-|-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-031 | DFW coverage validation shall query the NSX realized-state API | DFWPolicyValidator — `validateCoverage()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-031 | Realized-state endpoint is queried with correct VM ID and site |
-| FR-032 | DFW validation shall report covered=true when at least one active rule applies | DFWPolicyValidator — `validateCoverage()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-032 | Returns {covered: true} when API returns non-disabled rules |
-| FR-033 | DFW validation shall report covered=false when no active rules apply | DFWPolicyValidator — `validateCoverage()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-033 | Returns {covered: false} when API returns empty or all-disabled rules |
-| FR-034 | Orphaned rule detection shall identify groups with rules but no members | DFWPolicyValidator — `checkOrphanedRules()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-034 | Throws DFW-7007 when group has expressions but zero members |
-| FR-035 | Rule conflict detection shall identify shadowed rules | RuleConflictDetector — `detectShadowed()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-035 | Detects rule shadowed by higher-priority rule with broader scope |
-| FR-036 | Rule conflict detection shall identify contradictory rules | RuleConflictDetector — `detectContradictory()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-036 | Detects rules with same scope but different actions (ALLOW vs DROP) |
-| FR-037 | Rule conflict detection shall identify duplicate rules | RuleConflictDetector — `detectDuplicates()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-037 | Detects rules with identical scope and identical actions |
-| FR-038 | Unified rule analysis shall combine proposed and existing rules | RuleConflictDetector — `analyze()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-038 | analyze() returns {shadows, conflicts, duplicates, hasIssues} |
-| FR-039 | DFW policies shall be defined as YAML policy-as-code files | Policy YAML files | `policies/dfw-rules/*.yaml` | TC-039 | YAML files parse successfully and contain required fields |
-| FR-040 | YAML policies shall include metadata (owner, BRD reference, compliance tags) | Policy YAML metadata section | `policies/dfw-rules/environment-zone-isolation.yaml` | TC-040 | metadata section contains owner, brd_reference, compliance_tags |
+Each requirement entry in the matrices below includes the following fields:
 
----
+| Field | Description |
+|-------|-------------|
+| **FR-ID** | Unique requirement identifier from the BRD (FR-001 through FR-065) |
+| **Requirement** | Concise statement of the functional requirement |
+| **Design Component** | The class, module, or subsystem responsible for fulfilling the requirement |
+| **Source File** | The primary implementation file (relative to repository root) |
+| **Test Case** | The test case ID(s) from the Test Strategy (TC-XXX) that verify this requirement |
+| **Acceptance Criteria** | Measurable conditions that must be true for the requirement to be considered fulfilled |
 
-### FR-041 through FR-050: Error Handling, Retry, Circuit Breaker
-
-| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
-|-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-041 | Errors shall carry structured DFW error codes (DFW-XXXX format) | ErrorFactory — `create()` | `src/vro/actions/shared/ErrorFactory.js` | TC-041 | Created errors have `code` and `context` properties |
-| FR-042 | Transient failures shall be retried with configurable backoff intervals | RetryHandler — `run()` | `src/vro/actions/shared/RetryHandler.js` | TC-042 | HTTP 5xx errors retried; 4xx errors failed immediately |
-| FR-043 | Retry handler shall support pluggable retry strategies | RetryHandler — `retryStrategy` option | `src/vro/actions/shared/RetryHandler.js` | TC-043 | Custom strategy's getDelay() called for each retry |
-| FR-044 | Circuit breaker shall track per-endpoint failure rates | CircuitBreaker constructor, `_endpointStates` Map | `src/vro/actions/shared/CircuitBreaker.js` | TC-044 | Different endpoints maintain independent state |
-| FR-045 | Circuit breaker shall transition to OPEN after threshold failures | CircuitBreaker — `_recordFailure()` | `src/vro/actions/shared/CircuitBreaker.js` | TC-045 | State transitions to OPEN after 5 failures within 5-min window |
-| FR-046 | Circuit breaker shall reject calls immediately when OPEN | CircuitBreaker — `execute()` | `src/vro/actions/shared/CircuitBreaker.js` | TC-046 | DFW-6004 error thrown without invoking the wrapped function |
-| FR-047 | Circuit breaker shall transition to HALF_OPEN after reset timeout | CircuitBreaker — `execute()`, `getState()` | `src/vro/actions/shared/CircuitBreaker.js` | TC-047 | State becomes HALF_OPEN after 60s in OPEN state |
-| FR-048 | Successful HALF_OPEN probe shall reset breaker to CLOSED | CircuitBreaker — `_executeProbe()` | `src/vro/actions/shared/CircuitBreaker.js` | TC-048 | State returns to CLOSED and failure counters reset after probe success |
-| FR-049 | Saga coordinator shall record steps with compensating actions | SagaCoordinator — `recordStep()` | `src/vro/actions/lifecycle/SagaCoordinator.js` | TC-049 | Journal contains step entry with stepName, timestamp, and compensatingAction |
-| FR-050 | Saga compensation shall execute in LIFO order | SagaCoordinator — `compensate()` | `src/vro/actions/lifecycle/SagaCoordinator.js` | TC-050 | Last recorded step is compensated first |
+The relationship between FR, design component, and test case follows the V-model: each requirement is implemented by one or more components and verified by one or more test cases. Bidirectional traceability ensures that every requirement has both an implementation and a verification, and that no implementation exists without a corresponding requirement.
 
 ---
 
-### FR-051 through FR-060: Audit, Compliance, Reporting
+## 3. FR-001 through FR-010: ServiceNow Catalog Form Enhancements
+
+These requirements define the ServiceNow catalog item form behavior for VM Build Requests and Tag Update Requests. The form is the primary user interface for initiating DFW pipeline operations and must enforce tag governance rules at the point of entry.
 
 | FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
 |-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-051 | All operations shall produce structured JSON log entries | Logger — `_emit()` | `src/vro/actions/shared/Logger.js` | TC-051 | Log output is valid single-line JSON with all required fields |
-| FR-052 | Log entries shall include correlation ID, timestamp, level, step, and message | Logger — `_emit()` | `src/vro/actions/shared/Logger.js` | TC-052 | All five fields present in every log entry |
-| FR-053 | Logger shall support minimum level thresholding | Logger — `_emit()` | `src/vro/actions/shared/Logger.js` | TC-053 | DEBUG messages suppressed when minLevel=INFO |
-| FR-054 | Logger shall safely serialize Error objects in metadata | Logger — `_enrichErrorMetadata()` | `src/vro/actions/shared/Logger.js` | TC-054 | Error.message and Error.stack appear in serialized output |
-| FR-055 | Logger shall handle circular references in metadata | Logger — `_safeStringify()` | `src/vro/actions/shared/Logger.js` | TC-055 | Circular references replaced with "[Circular]" instead of throwing |
-| FR-056 | Circuit breaker shall expose statistics for monitoring dashboards | CircuitBreaker — `getStats()` | `src/vro/actions/shared/CircuitBreaker.js` | TC-056 | Stats include name, state, totalSuccesses, totalFailures, recentFailures |
-| FR-057 | DFW policy YAML shall include compliance tags for audit mapping | Policy YAML metadata | `policies/dfw-rules/*.yaml` | TC-057 | compliance_tags array present with valid compliance framework identifiers |
-| FR-058 | DFW policy YAML shall include change control reference | Policy YAML metadata | `policies/dfw-rules/*.yaml` | TC-058 | change_control field contains CHG number |
-| FR-059 | DFW policy YAML shall include last reviewed date and review cadence | Policy YAML metadata | `policies/dfw-rules/*.yaml` | TC-059 | last_reviewed and review_cadence_days fields present and valid |
-| FR-060 | Pipeline shall support drift detection by comparing YAML policies to NSX realized state | DFW reconciliation workflow | `src/vro/actions/dfw/DFWPolicyValidator.js` + policies | TC-060 | Discrepancies between YAML policy and NSX state are detected and reported |
+| FR-001 | Catalog form renders all six tag category fields (Application, Tier, Environment, DataClassification, Compliance, CostCenter) | ServiceNow Catalog Item + Client Script `onLoad` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-001 | All six fields are present in `g_form` after `onLoad()` completes; each field is visible and interactive |
+| FR-002 | DataClassification defaults to "Internal" when the form loads | Client Script `vmBuildRequest_onLoad` — `_setDefaultFieldValues()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-002 | `g_form.getValue('data_classification')` returns `'Internal'` immediately after `onLoad()` completes; default is only applied when the field is empty |
+| FR-003 | Compliance defaults to "None" when the form loads | Client Script `vmBuildRequest_onLoad` — `_setDefaultFieldValues()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-003 | `g_form.getValue('compliance')` returns `'None'` immediately after `onLoad()` completes; default is only applied when the field is empty |
+| FR-004 | CostCenter auto-populated from user's department record via GlideAjax | Client Script `vmBuildRequest_onLoad` — `_populateCostCenter()` + `_fetchCostCenterFromDepartment()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-004 | `g_form.setValue('cost_center', answer)` is called with the cost center value returned by `DFWCatalogUtils.getCostCenterForUser()`; field is set to read-only after population |
+| FR-005 | CostCenter falls back to user preference when GlideAjax returns empty | Client Script `vmBuildRequest_onLoad` — `_populateCostCenter()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-005 | When `g_user.getPreference('cost_center')` returns a non-empty value, it is used as the CostCenter value; field is set to read-only; when both preference and GlideAjax are empty, field remains editable with info message |
+| FR-006 | Application, Tier, Environment, and DataClassification marked as mandatory on form load | Client Script `vmBuildRequest_onLoad` — `_initializeFormState()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onLoad.js` | TC-006 | `g_form.setMandatory()` is called with `true` for `application`, `tier`, `environment`, and `data_classification`; form cannot be submitted without these fields populated |
+| FR-007 | Tier change to "Database" makes Compliance field mandatory | Client Script `vmBuildRequest_onChange` — `_handleTierChange()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onChange.js` | TC-006 (extended) | When `tier` changes to `'Database'`, `g_form.setMandatory('compliance', true)` is called and an info message explains the requirement; when tier changes away from Database, Compliance reverts to optional |
+| FR-008 | Environment change filters DataClassification options by tier | Client Script `vmBuildRequest_onChange` — `_filterDataClassificationByTier()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onChange.js` | TC-002 (extended) | DataClassification dropdown options are restricted per the `DATA_CLASSIFICATION_BY_TIER` mapping (e.g., Web tier shows only Public/Internal; Database tier shows only Confidential/Restricted); invalid previous selection is cleared with warning message |
+| FR-009 | Sandbox environment restricts Compliance to "None" only | Client Script `vmBuildRequest_onChange` — `_handleEnvironmentChange()` + `_filterComplianceForSandbox()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onChange.js` | TC-013, TC-014 | When Environment is set to `'Sandbox'`, Compliance dropdown shows only `'None'`; value is automatically set to `'None'`; info message explains the restriction |
+| FR-010 | PCI Compliance in Sandbox raises DFW-4003 error and reverts | Client Script `vmBuildRequest_onChange` — `_validateComplianceEnvironment()` | `src/servicenow/catalog/client-scripts/vmBuildRequest_onChange.js` | TC-013 | When Compliance includes `'PCI'` and Environment is `'Sandbox'`, error message `[DFW-4003]` is displayed on Compliance field; value is reverted to `'None'` |
+
+### Design Notes — ServiceNow Catalog Form
+
+The form logic is split into two client scripts following ServiceNow best practices:
+
+1. **`vmBuildRequest_onLoad.js`** runs once when the form loads. It sets defaults, populates CostCenter asynchronously, and initializes field state (mandatory flags, visibility). It does not perform cross-field validation because all fields are at their default values.
+
+2. **`vmBuildRequest_onChange.js`** runs on every field change event. It dispatches to handler functions based on the changed field name (`tier`, `environment`, `compliance`). Each handler enforces business rules that depend on the current form state, such as filtering DataClassification options based on Tier or blocking PCI in Sandbox environments.
+
+The production warning banner (`production_warning_banner` UI Macro) is hidden by default and shown only when Environment is set to Production. The banner uses DOM manipulation via ServiceNow's `gel()` function.
+
+Server-side validation in `catalogItemValidation.js` and `tagFieldServerValidation.js` provides a second layer of defense against invalid submissions that bypass client-side checks.
 
 ---
 
-### FR-061 through FR-065: Multi-Site, Legacy Onboarding, Policy-as-Code
+## 4. FR-011 through FR-020: Tag Cardinality and Operations
+
+These requirements define how NSX tags are enforced, applied, updated, and removed on virtual machines. The tag system uses a cardinality model where each category is either single-value (only one tag per category) or multi-value (multiple tags may coexist within the category).
 
 | FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
 |-------|------------|-----------------|-------------|-----------|-------------------|
-| FR-061 | Pipeline shall support NDCNG and TULNG sites with independent endpoints | ConfigLoader — `sites` configuration | `src/vro/actions/shared/ConfigLoader.js` | TC-061 | Both sites configured with distinct vCenter, NSX, and Global Manager URLs |
-| FR-062 | Pipeline shall support NSX Federation for cross-site policy synchronization | NSX Global Manager integration | ConfigLoader + NSX Adapter | TC-062 | Global Manager endpoint is available and reachable per-site |
-| FR-063 | Pipeline shall support legacy workload onboarding through batch tag operations | Batch TagOperations wrapper | `src/vro/actions/tags/TagOperations.js` (batch mode) | TC-063 | Multiple VMs can be tagged in a single batch operation |
-| FR-064 | DFW rules shall be version-controlled as YAML files in the policies directory | Repository pattern — policy files | `policies/dfw-rules/*.yaml` | TC-064 | Policy files exist in git, are parseable YAML, and pass schema validation |
-| FR-065 | YAML policy changes shall be validated in CI before merge | CI pipeline — schema validation | `.github/workflows/ci.yml` (validate step) | TC-065 | CI job fails when YAML policy contains invalid structure |
+| FR-011 | Single-value cardinality replaces existing tag value in same category | TagCardinalityEnforcer — `enforceCardinality()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-007 | `enforceCardinality({Application: 'A'}, {Application: 'B'})` returns `{Application: 'B'}`; the previous value 'A' is completely replaced by 'B' for any single-value category |
+| FR-012 | Multi-value cardinality merges new values with existing values | TagCardinalityEnforcer — `enforceCardinality()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-008 | `enforceCardinality({Compliance: ['PCI']}, {Compliance: ['HIPAA']})` returns `{Compliance: ['PCI', 'HIPAA']}`; duplicate values are deduplicated; order is not significant |
+| FR-013 | Compliance "None" is mutually exclusive with other compliance values | TagCardinalityEnforcer — `enforceCardinality()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-009, TC-010 | Adding `'None'` clears all other Compliance values; adding any real compliance value (`PCI`, `HIPAA`, `SOX`) removes `'None'` |
+| FR-014 | Tag application is idempotent — no PATCH when current matches desired | TagOperations — `applyTags()` | `src/vro/actions/tags/TagOperations.js` | TC-011 | When current VM tags match the desired tags exactly, `applyTags()` returns `{applied: false}` without making any API calls; idempotency is achieved through read-compare-write |
+| FR-015 | Delta computation identifies only changed tag categories | TagCardinalityEnforcer — `computeDelta()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-012 | `computeDelta(currentTags, desiredTags)` returns only the categories that differ between current and desired state; unchanged categories are excluded from the delta |
+| FR-016 | PCI + Sandbox tag combination rejected as invalid | TagCardinalityEnforcer — `validateTagCombinations()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-013 | `validateTagCombinations()` returns `{valid: false}` with error message referencing DFW-4003 when Compliance includes 'PCI' and Environment is 'Sandbox' |
+| FR-017 | HIPAA + Sandbox tag combination rejected as invalid | TagCardinalityEnforcer — `validateTagCombinations()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-014 | `validateTagCombinations()` returns `{valid: false}` with error message when Compliance includes 'HIPAA' and Environment is 'Sandbox' |
+| FR-018 | Confidential DataClassification requires a compliance framework | TagCardinalityEnforcer — `validateTagCombinations()` | `src/vro/actions/tags/TagCardinalityEnforcer.js` | TC-015 | `validateTagCombinations()` returns `{valid: false}` when DataClassification is 'Confidential' or 'Restricted' and Compliance is `['None']` |
+| FR-019 | Tag update preserves unchanged categories using read-compare-write | TagOperations — `updateTags()` | `src/vro/actions/tags/TagOperations.js` | TC-016 | `updateTags()` reads current tags, merges only the specified categories via `enforceCardinality()`, and writes the merged result; categories not mentioned in the update request are unchanged |
+| FR-020 | Tag removal removes only specified categories, preserving others | TagOperations — `removeTags()` | `src/vro/actions/tags/TagOperations.js` | TC-017 | `removeTags()` removes only the specified categories from the VM's tag set; all other categories remain intact; uses read-compare-write pattern to avoid race conditions |
+
+### Design Notes — Tag Cardinality
+
+The `TagCardinalityEnforcer` uses a `CATEGORY_CONFIG` constant that defines the cardinality type for each category:
+
+- **Single-value categories**: Application, Tier, Environment, DataClassification, CostCenter — setting a new value in any of these categories replaces the existing value entirely.
+- **Multi-value categories**: Compliance — new values are merged with existing values. The `'None'` value has special exclusivity logic: it cannot coexist with real compliance values.
+
+Three conflict rules are defined:
+1. PCI compliance is not permitted in Sandbox environments
+2. HIPAA compliance is not permitted in Sandbox environments
+3. Confidential or Restricted DataClassification requires at least one real compliance framework (not `'None'`)
+
+The `computeDelta()` method enables minimal API calls by identifying only the categories that actually need to change, avoiding unnecessary PATCH operations on unchanged tags.
+
+---
+
+## 5. FR-021 through FR-030: Pipeline Orchestration and Configuration
+
+These requirements define the correlation ID system, the lifecycle orchestration pattern (Template Method), and the configuration management subsystem.
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-021 | Correlation ID generated in format RITM-{number}-{timestamp} | CorrelationContext — `create()` | `src/vro/actions/shared/CorrelationContext.js` | TC-018 | `CorrelationContext.create('12345')` returns a string matching the pattern `/^RITM-12345-\d+$/`; the timestamp component is the epoch millisecond value at creation time |
+| FR-022 | Correlation ID propagated in HTTP headers as X-Correlation-ID | CorrelationContext — `getHeaders()` | `src/vro/actions/shared/CorrelationContext.js` | TC-019 | `getHeaders()` returns `{'X-Correlation-ID': correlationId}` where `correlationId` is the currently active correlation ID |
+| FR-023 | Day 0 provisioning orchestrates full lifecycle: tags, groups, DFW, callback | Day0Orchestrator — `prepare()`, `execute()`, `verify()` | `src/vro/actions/lifecycle/Day0Orchestrator.js` | TC-045 | Day 0 flow executes in sequence: provisionVM → waitForVMTools (60 attempts, 5s) → applyTags → waitForPropagation (30 attempts, 10s) → verifyGroupMembership → validateDFW; success callback sent to ServiceNow |
+| FR-024 | Day 2 update orchestrates tag delta, group impact analysis, and DFW re-verification | Day2Orchestrator — `prepare()`, `execute()`, `verify()` | `src/vro/actions/lifecycle/Day2Orchestrator.js` | TC-046 | Day 2 flow: getCurrentTags → detectDrift → predictGroupChanges → applyTagDeltas → waitForPropagation → verifyGroups → validateDFW; on failure, saga compensation rolls back applied tag changes |
+| FR-025 | Day N decommission orchestrates tag removal, group cleanup, dependency check, and VM deprovision | DayNOrchestrator — `prepare()`, `execute()`, `verify()` | `src/vro/actions/lifecycle/DayNOrchestrator.js` | TC-045 (extended) | Day N flow: getCurrentTags → getGroupMemberships → checkDependencies (HALT if found) → checkOrphanedRules → removeTags → verifyGroupRemoval (20 attempts) → verifyCleanup → deprovisionVM → updateCMDB |
+| FR-026 | ConfigLoader resolves site-specific endpoints for NDCNG and TULNG | ConfigLoader — `getEndpointsForSite()` | `src/vro/actions/shared/ConfigLoader.js` | TC-020 | `getEndpointsForSite('NDCNG')` returns `{vcenterUrl, nsxUrl, nsxGlobalUrl}` with valid NDCNG-specific URLs; same for `'TULNG'` returning TULNG-specific URLs |
+| FR-027 | ConfigLoader rejects invalid site codes with DFW-4004 | ConfigLoader — `getEndpointsForSite()` | `src/vro/actions/shared/ConfigLoader.js` | TC-021 | `getEndpointsForSite('INVALID')` throws an error with code `'DFW-4004'`; only `'NDCNG'` and `'TULNG'` are accepted as valid site codes |
+| FR-028 | ConfigLoader constructor overrides take precedence over defaults | ConfigLoader — constructor | `src/vro/actions/shared/ConfigLoader.js` | TC-022 | When a ConfigLoader is constructed with `{retry: {maxRetries: 5}}`, `config.get('retry.maxRetries')` returns `5` instead of the default `3` |
+| FR-029 | LifecycleOrchestrator base class enforces Template Method pattern | LifecycleOrchestrator — `run()` | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-045, TC-046 | `run()` calls `validate()` → `resolveEndpoints()` → `prepare()` → `execute()` → `verify()` → `callback()` in fixed sequence; subclasses (Day0, Day2, DayN) override `prepare()`, `execute()`, and `verify()` |
+| FR-030 | LifecycleOrchestrator factory method creates the correct subclass for each request type | LifecycleOrchestrator — `create()` | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-045, TC-046 | `LifecycleOrchestrator.create('day0-provision')` returns a Day0Orchestrator; `create('day2-update')` returns Day2Orchestrator; `create('dayn-decommission')` returns DayNOrchestrator; invalid type throws DFW-4001 |
+
+### Design Notes — Orchestration Architecture
+
+The `LifecycleOrchestrator` base class implements the Template Method pattern, defining the invariant pipeline skeleton in `run()`:
+
+```
+validate → resolveEndpoints → prepare → execute → verify → callback
+```
+
+The three subclasses (Day0, Day2, DayN) override only `prepare()`, `execute()`, and `verify()` to provide operation-specific behavior. The base class handles:
+
+- Input validation against JSON Schema
+- Site endpoint resolution via ConfigLoader
+- Error handling via `_handleFailure()` which triggers saga compensation, DLQ insertion, and error callback
+- Correlation ID initialization
+
+The factory method `LifecycleOrchestrator.create(requestType)` encapsulates the subclass selection logic, ensuring that the caller does not need to know which concrete class to instantiate.
+
+Configuration is managed through the `ConfigLoader` class, which supports:
+- Per-site endpoint resolution (`NDCNG` and `TULNG`)
+- Vault-referenced credentials (`{{vault:secret/...}}`)
+- Constructor overrides for testing and environment-specific settings
+- Nested property access via dot-notation paths
+
+---
+
+## 6. FR-031 through FR-040: DFW Policy Validation and Conflict Detection
+
+These requirements define the DFW policy verification and rule conflict analysis capabilities that ensure correct firewall coverage after tag operations.
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-031 | DFW coverage validation queries NSX realized-state API | DFWPolicyValidator — `validateCoverage()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-023, TC-024 | `validateCoverage(vmId, site)` calls NSX realized-state API endpoint and returns coverage status based on response |
+| FR-032 | DFW coverage returns true when VM has active (non-disabled) rules | DFWPolicyValidator — `validateCoverage()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-023 | When the NSX API returns a non-empty array of rules with at least one non-disabled rule, `validateCoverage()` returns `{covered: true, ruleCount: N}` |
+| FR-033 | DFW coverage returns false when VM has no rules | DFWPolicyValidator — `validateCoverage()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-024 | When the NSX API returns an empty array of rules, `validateCoverage()` returns `{covered: false}` with error code `DFW-7006` |
+| FR-034 | Orphaned rules detected for groups with expressions but zero members | DFWPolicyValidator — `checkOrphanedRules()` | `src/vro/actions/dfw/DFWPolicyValidator.js` | TC-025 | When a security group has membership expressions (tag criteria) but zero realized members, `checkOrphanedRules()` throws error `DFW-7007` with the orphaned group details |
+| FR-035 | Shadowed rules detected when higher-priority rule covers same scope | RuleConflictDetector — `detectShadowed()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-026 | `detectShadowed()` identifies pairs of rules where a higher-priority rule with a broader scope (superset of source/destination groups) renders a lower-priority rule ineffective |
+| FR-036 | Contradictory rules detected when same-scope rules have opposing actions | RuleConflictDetector — `detectContradictory()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-027 | `detectContradictory()` identifies pairs of rules that match the same traffic (same source, destination, services) but have different actions (ALLOW vs DROP/REJECT) |
+| FR-037 | Duplicate rules detected when same-scope rules have identical actions | RuleConflictDetector — `detectDuplicates()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-028 | `detectDuplicates()` identifies pairs of rules that match the same traffic and have the same action, indicating unnecessary redundancy |
+| FR-038 | Unified conflict analysis returns combined summary with hasIssues flag | RuleConflictDetector — `analyze()` | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-050 | `analyze(proposedRules, existingRules)` returns `{conflicts: [...], shadows: [...], duplicates: [...], hasIssues: boolean}` where `hasIssues` is `true` when any category is non-empty |
+| FR-039 | DFW policy reconciliation compares YAML definitions to NSX realized state | PolicyDeployer + DFWPolicyValidator | `src/vro/actions/dfw/DFWPolicyValidator.js`, `policies/dfw-rules/*.yaml` | TC-048 | Reconciliation workflow reads YAML policy files, compares them to the current NSX realized state, identifies discrepancies, and optionally applies corrections |
+| FR-040 | Rule conflict detection operates on pure in-memory rule arrays with no API calls | RuleConflictDetector — all methods | `src/vro/actions/dfw/RuleConflictDetector.js` | TC-026, TC-027, TC-028, TC-050 | All `detectShadowed()`, `detectContradictory()`, `detectDuplicates()`, and `analyze()` methods accept rule arrays as input parameters and perform no external API calls; they are pure functions suitable for testing without mocks |
+
+### Design Notes — Rule Conflict Detection
+
+The `RuleConflictDetector` class is deliberately designed as a pure-logic analyzer with no constructor dependencies. This makes it trivially testable and reusable across different contexts (pre-deployment validation, drift detection, audit reporting).
+
+The `analyze()` method is the primary entry point. It combines proposed and existing rules into a single array, then runs all three detection methods:
+
+1. **`detectShadowed()`** — Identifies rules that are completely covered by a higher-priority rule. A shadow occurs when Rule A has a broader or equal scope (source groups, destination groups, services) and higher priority than Rule B.
+
+2. **`detectContradictory()`** — Identifies rules with the same scope but opposing actions (ALLOW vs DROP). These are configuration errors that lead to unpredictable behavior depending on rule evaluation order.
+
+3. **`detectDuplicates()`** — Identifies rules with identical scope and action, which waste policy table entries and complicate auditing.
+
+---
+
+## 7. FR-041 through FR-050: Error Handling, Retry, and Circuit Breaker
+
+These requirements define the resilience mechanisms that protect the pipeline from transient failures and cascading outages.
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-041 | ErrorFactory creates structured errors with DFW error codes and context | ErrorFactory — `createError()` | `src/vro/actions/shared/ErrorFactory.js` | TC-029 | `ErrorFactory.createError('DFW-3003', message, context)` produces a `DfwError` instance with `code`, `message`, and `context` properties; error extends native `Error` for stack trace support |
+| FR-042 | RetryHandler retries operations on 5xx HTTP errors with exponential backoff | RetryHandler — `execute()` | `src/vro/actions/shared/RetryHandler.js` | TC-030, TC-031 | For HTTP 5xx errors, the wrapped function is called up to `maxRetries + 1` times (1 initial + 3 retries by default) with intervals [5s, 15s, 45s]; for 4xx errors, no retry is attempted |
+| FR-043 | Custom retry strategy can override default backoff intervals | RetryHandler — `execute()` with `strategy` parameter | `src/vro/actions/shared/RetryHandler.js` | TC-032 | When a custom strategy object with `getDelay(attempt)` method is provided, the strategy's `getDelay()` is called for each retry attempt instead of using the default intervals array |
+| FR-044 | Circuit breaker starts in CLOSED state allowing all calls | CircuitBreaker — constructor | `src/vro/actions/shared/CircuitBreaker.js` | TC-033 | A newly instantiated CircuitBreaker has `getState()` returning `'CLOSED'`; all calls to `execute()` are forwarded to the wrapped function |
+| FR-045 | Circuit breaker transitions to OPEN after failure threshold exceeded | CircuitBreaker — `execute()` failure tracking | `src/vro/actions/shared/CircuitBreaker.js` | TC-034 | After 5 failures (default `failureThreshold`) within the sliding window (default 300s), `getState()` returns `'OPEN'`; transition is logged as a warning |
+| FR-046 | Circuit breaker rejects all calls in OPEN state with DFW-6004 | CircuitBreaker — `execute()` in OPEN state | `src/vro/actions/shared/CircuitBreaker.js` | TC-035 | When in OPEN state, `execute()` throws an error with code `'DFW-6004'` without invoking the wrapped function; the error message identifies the tripped endpoint |
+| FR-047 | Circuit breaker transitions to HALF_OPEN after reset timeout elapses | CircuitBreaker — time-based transition | `src/vro/actions/shared/CircuitBreaker.js` | TC-036 | After the `resetTimeout` (default 60s) elapses since the OPEN transition, the next call to `getState()` or `execute()` transitions the breaker to `'HALF_OPEN'`; a single probe call is permitted |
+| FR-048 | Successful probe call in HALF_OPEN resets breaker to CLOSED | CircuitBreaker — `execute()` in HALF_OPEN state | `src/vro/actions/shared/CircuitBreaker.js` | TC-037 | When a call succeeds in HALF_OPEN state, the breaker transitions to `'CLOSED'`, clearing all failure counters and restoring normal operation |
+| FR-049 | Saga records completed steps in execution order | SagaCoordinator — `recordStep()` + `getJournal()` | `src/vro/actions/lifecycle/SagaCoordinator.js` | TC-038 | After recording steps A, B, C via `recordStep()`, `getJournal()` returns `[A, B, C]` in the order they were recorded |
+| FR-050 | Saga compensates steps in reverse (LIFO) order, continuing on individual failure | SagaCoordinator — `compensate()` | `src/vro/actions/lifecycle/SagaCoordinator.js` | TC-039, TC-040 | `compensate()` invokes compensation functions in reverse order (C, B, A); if B's compensation throws, A's compensation is still invoked; result includes `{compensated: N, failed: M, errors: [...]}` |
+
+### Design Notes — Resilience Patterns
+
+**Circuit Breaker State Machine:**
+
+The circuit breaker implements a three-state machine per endpoint:
+
+```
+CLOSED --[threshold failures]--> OPEN --[resetTimeout]--> HALF_OPEN
+                                  ^                          |
+                                  |--[probe fails]-----------|
+
+HALF_OPEN --[probe succeeds]--> CLOSED
+```
+
+Per-endpoint state is stored in a module-level `Map`, providing cluster-wide visibility in the vRO production environment through shared Configuration Elements. Default configuration:
+- `failureThreshold`: 5 failures
+- `resetTimeout`: 60,000 ms (60 seconds)
+- `windowSize`: 300,000 ms (5 minutes sliding window)
+
+The `getStats()` method exposes statistics (name, state, totalSuccesses, totalFailures, recentFailures, thresholds) for dashboard consumption.
+
+**Saga Compensation:**
+
+The `SagaCoordinator` implements the saga pattern for distributed transaction management. Each pipeline step is recorded with a forward action and a compensating action. On failure, compensation is executed in LIFO (Last In, First Out) order to reverse completed steps. The compensation is best-effort: if an individual compensation fails, the remaining compensations still execute. The result object tracks `compensated`, `failed`, and `errors` counts.
+
+**Retry with Exponential Backoff:**
+
+The `RetryHandler` uses configurable intervals (default `[5000, 15000, 45000]` ms) and a `shouldRetry` predicate that returns `true` for HTTP 5xx errors and `false` for 4xx errors. The final error from retry exhaustion is enriched with `retryCount` and `operationName` properties for observability.
+
+---
+
+## 8. FR-051 through FR-060: Logging, Observability, and Compliance
+
+These requirements define the structured logging system that provides the foundation for monitoring, alerting, audit compliance, and operational troubleshooting.
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-051 | Logger produces valid single-line JSON output | Logger — all log methods | `src/vro/actions/shared/Logger.js` | TC-041 | Every log entry produced by `info()`, `warn()`, `error()`, `debug()` is a single-line string that successfully parses with `JSON.parse()` |
+| FR-052 | Log entries include timestamp, level, correlationId, step, message, and metadata | Logger — log entry structure | `src/vro/actions/shared/Logger.js` | TC-041 | Each JSON log entry contains all required fields: `timestamp` (ISO 8601), `level` (DEBUG/INFO/WARN/ERROR), `correlationId` (from CorrelationContext), `step` (pipeline step name), `message` (human-readable), and `metadata` (contextual object) |
+| FR-053 | Logger respects minimum level threshold, suppressing lower-priority messages | Logger — level filtering | `src/vro/actions/shared/Logger.js` | TC-042 | When `minLevel` is set to `'INFO'`, calls to `debug()` produce no output; calls to `info()`, `warn()`, `error()` produce output; level hierarchy is DEBUG < INFO < WARN < ERROR |
+| FR-054 | Logger enriches Error objects in metadata with errorMessage and stack properties | Logger — error serialization | `src/vro/actions/shared/Logger.js` | TC-043 | When `error()` is called with an `Error` instance in metadata, the output JSON contains `errorMessage` (from `error.message`) and `stack` (from `error.stack`) as top-level metadata properties |
+| FR-055 | Logger handles circular references in metadata without throwing | Logger — safe serialization | `src/vro/actions/shared/Logger.js` | TC-044 | When metadata contains a circular reference (e.g., `obj.self = obj`), `JSON.stringify` does not throw; circular references are replaced with a placeholder string such as `'[Circular]'` |
+| FR-056 | All pipeline operations are logged with correlation ID for end-to-end tracing | CorrelationContext + Logger integration | `src/vro/actions/shared/CorrelationContext.js`, `src/vro/actions/shared/Logger.js` | TC-018, TC-041 | Every log entry produced during a pipeline execution includes the `correlationId` field with the RITM-derived correlation ID, enabling Splunk queries to reconstruct the full execution trace |
+| FR-057 | ServiceNow callback payloads contain success or failure details with correlation ID | SnowPayloadAdapter + LifecycleOrchestrator | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-045, TC-046 | Success callbacks contain `{status: 'success', correlationId, appliedTags, groupMemberships, activeDFWPolicies}`; failure callbacks contain `{status: 'failure', correlationId, errorCode, errorCategory, failedStep, compensatingActionTaken}` |
+| FR-058 | Error callback includes compensation result when saga was triggered | LifecycleOrchestrator — `_handleFailure()` | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-046 | When a pipeline failure triggers saga compensation, the error callback to ServiceNow includes `compensatingActionTaken: true` and the `compensationResult` object with `{compensated, failed, errors}` |
+| FR-059 | Failed operations are placed in Dead Letter Queue after retry exhaustion | LifecycleOrchestrator — `_handleFailure()` + DLQ | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-046 (extended) | When all retries are exhausted and saga compensation completes, the original operation with its full context (correlationId, input payload, completedSteps, error, compensationResult) is stored in the DLQ for manual investigation |
+| FR-060 | DLQ entries contain sufficient context for manual reprocessing | DeadLetterQueue | `src/vro/actions/lifecycle/LifecycleOrchestrator.js` | TC-046 (extended) | Each DLQ entry contains: `id` (unique), `correlationId`, `operation` (day0/day2/dayn), `vmId`, `site`, `error` (full error object), `completedSteps`, `compensationResult`, `timestamp`, `retryCount`, and the original input payload |
+
+### Design Notes — Logging and Observability
+
+The Logger module produces structured JSON that is consumed by Splunk (or ELK) for centralized log management. Key design decisions:
+
+1. **Single-line JSON**: Each log entry is a single line, enabling reliable parsing by log aggregation agents without multi-line collation issues.
+
+2. **Correlation ID threading**: The `CorrelationContext.getCurrent()` value is automatically included in every log entry, enabling reconstruction of the complete execution timeline for any pipeline run via a single Splunk query.
+
+3. **Error enrichment**: When an `Error` object is passed as metadata, the Logger extracts `message` and `stack` into dedicated fields rather than relying on JSON serialization of the Error object (which loses most properties by default).
+
+4. **Circular reference safety**: A custom replacer function for `JSON.stringify` detects and handles circular references, preventing runtime exceptions from poorly-constructed metadata objects.
+
+5. **Level filtering**: Configurable minimum level allows production environments to suppress DEBUG messages while preserving them for development and troubleshooting.
+
+---
+
+## 9. FR-061 through FR-065: Policy-as-Code and Schema Validation
+
+These requirements define the policy-as-code framework where DFW rules, security groups, and tag categories are defined as YAML files under version control, validated by JSON Schema, and deployed through CI/CD.
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-061 | DFW policies defined as YAML files with metadata, rules, and compliance tags | YAML policy files | `policies/dfw-rules/*.yaml` | TC-048 | Each YAML policy file contains `policy_name`, `description`, `compliance_tags`, `brd_reference`, `review_cadence_days`, and a `rules` array with source/destination groups, services, and actions |
+| FR-062 | Security groups defined as YAML files with tag-based membership criteria | YAML security group files | `policies/security-groups/*.yaml` | TC-048 (extended) | Each security group YAML file defines group name, membership criteria (tag expressions), and the associated NSX group path |
+| FR-063 | Tag categories defined as YAML with cardinality, allowed values, and governance metadata | YAML tag category file | `policies/tag-categories/categories.yaml` | TC-048 (extended) | The `categories.yaml` file defines all six tag categories with `category_name`, `cardinality`, `required`, `nsx_scope`, `allowed_values`, `validation` patterns, and `governance` metadata |
+| FR-064 | YAML policies validated against JSON Schema in CI pipeline | PayloadValidator + CI | `schemas/snow-vro-payload.schema.json`, `.github/workflows/ci.yml` | TC-048 | The CI pipeline runs `npm run validate-policies` which validates all YAML files in `policies/` against their corresponding JSON Schema; schema violations fail the CI build |
+| FR-065 | ServiceNow-to-vRO payload validated against JSON Schema at pipeline entry | PayloadValidator | `schemas/snow-vro-payload.schema.json` | TC-049 | The `LifecycleOrchestrator.validate()` method validates the incoming ServiceNow payload against `snow-vro-payload.schema.json` using AJV; invalid payloads are rejected with DFW-4001 error before any API calls are made |
+
+### Design Notes — Policy-as-Code
+
+The policy-as-code approach stores all security policy definitions in version-controlled YAML files organized by type:
+
+```
+policies/
+  dfw-rules/
+    application-template.yaml       # Three-tier micro-segmentation template
+    environment-zone-isolation.yaml  # Cross-environment isolation rules
+    infrastructure-shared-services.yaml  # Shared service access rules
+    emergency-quarantine.yaml        # Emergency quarantine DROP-all policy
+  security-groups/
+    application-groups.yaml          # Per-application tag-based groups
+    aggregate-groups.yaml            # Cross-application aggregate groups
+  tag-categories/
+    categories.yaml                  # Enterprise tag dictionary definition
+```
+
+Each YAML policy file includes compliance metadata:
+- `compliance_tags`: Array of applicable compliance frameworks (PCI, SOX, HIPAA)
+- `brd_reference`: Link to the specific BRD section that mandates this policy
+- `review_cadence_days`: Days between required policy reviews (default: 90)
+
+JSON Schema validation (using AJV 8.12.x) is applied at two points:
+1. **CI pipeline**: `validate-policies` job validates all YAML files on every PR
+2. **Runtime**: `LifecycleOrchestrator.validate()` validates incoming ServiceNow payloads against `snow-vro-payload.schema.json`
+
+The `snow-vro-payload.schema.json` schema defines:
+- `correlationId` pattern: `^SNOW-REQ-[0-9]{4}-[0-9]{7}$`
+- `requestType` enum: `['day0-provision', 'day2-update', 'dayn-decommission']`
+- Conditional required fields for Day 0 (all tag assignment fields required)
+- `tagAssignment` definition with required `application`, `tier`, `environment`, `compliance`, and `dataClassification`
+
+---
+
+## 10. Cross-Cutting Traceability Summary
+
+The following table provides a high-level summary of the traceability between functional areas, components, and NFRs.
+
+| Functional Area | FR Range | Primary Components | Key NFRs Addressed | Test Cases |
+|----------------|----------|-------------------|---------------------|------------|
+| ServiceNow Catalog Form | FR-001 — FR-010 | `vmBuildRequest_onLoad.js`, `vmBuildRequest_onChange.js`, `catalogItemValidation.js` | NFR-018 (Input validation), NFR-019 (Conflict detection) | TC-001 — TC-006 |
+| Tag Cardinality and Operations | FR-011 — FR-020 | TagCardinalityEnforcer, TagOperations | NFR-005 (10K+ VMs), NFR-006 (50+ values), NFR-014 (Idempotency) | TC-007 — TC-017 |
+| Pipeline Orchestration | FR-021 — FR-030 | CorrelationContext, ConfigLoader, LifecycleOrchestrator, Day0/Day2/DayN | NFR-002 (E2E under 5 min), NFR-009 (No SPOF), NFR-016 (Correlation ID) | TC-018 — TC-022, TC-045, TC-046 |
+| DFW Policy Validation | FR-031 — FR-040 | DFWPolicyValidator, RuleConflictDetector | NFR-003 (Tag propagation 120s), NFR-022 (Compliance references), NFR-024 (BRD traceability) | TC-023 — TC-028, TC-050 |
+| Error Handling and Resilience | FR-041 — FR-050 | ErrorFactory, RetryHandler, CircuitBreaker, SagaCoordinator | NFR-010 (Graceful degradation), NFR-011 (Auto recovery), NFR-028 (Error taxonomy) | TC-029 — TC-040 |
+| Logging and Observability | FR-051 — FR-060 | Logger, CorrelationContext, DeadLetterQueue | NFR-020 (RITM audit), NFR-021 (7-year retention), NFR-032 (Structured logging) | TC-041 — TC-044 |
+| Policy-as-Code | FR-061 — FR-065 | YAML policies, PayloadValidator, CI pipeline | NFR-023 (Peer review), NFR-046 (JSON Schema), NFR-047 (YAML validation) | TC-048, TC-049 |
+
+### Requirement Coverage Statistics
+
+| Metric | Count |
+|--------|-------|
+| Total Functional Requirements | 65 |
+| Requirements with identified design component | 65 (100%) |
+| Requirements with source file reference | 65 (100%) |
+| Requirements with test case reference | 65 (100%) |
+| Requirements with acceptance criteria | 65 (100%) |
+| Unique test cases referenced | 50 |
+| Unique source files referenced | 18 |
 
 ---
 
