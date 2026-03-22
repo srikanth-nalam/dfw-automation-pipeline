@@ -15,13 +15,13 @@ sequenceDiagram
     participant DLQ as Dead Letter Queue
 
     SNOW->>vRO: POST /trigger (DayN payload)
-    Note over SNOW,vRO: requestType=dayn-decommission<br/>vmId, site
+    Note over SNOW,vRO: requestType=dayn-decommission vmId, site
 
     vRO->>vRO: Generate correlationId
     vRO->>VAL: validate(payload)
     VAL->>VAL: Schema validation
     VAL->>VAL: Verify vmId exists in inventory
-    VAL->>VAL: Verify VM is powered off or<br/>decommission is authorized
+    VAL->>VAL: Verify VM is powered off or decommission is authorized
     VAL-->>vRO: Validation passed
 
     vRO->>SAGA: begin(correlationId)
@@ -57,21 +57,21 @@ sequenceDiagram
                 NSX-->>CB: rules referencing this group
                 CB-->>DFW: rules[]
                 DFW-->>vRO: orphanedRules[] (if any)
-                Note over vRO: Log warning DFW-7007 if rules<br/>will become orphaned after removal
+                Note over vRO: Log warning DFW-7007 if rules will become orphaned after removal
             end
         end
 
         vRO->>vRO: Generate dependency report
-        Note over vRO: Report: groupsAffected, orphanRisk,<br/>safe to proceed (yes/no)
+        Note over vRO: Report: groupsAffected, orphanRisk, safe to proceed
     end
 
     rect rgb(230, 255, 230)
         Note over vRO,VC: Step 3 — Remove All Tags
         vRO->>CB: execute(removeTags)
-        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association<br/>(detach all tags from VM)
+        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association (detach all tags from VM)
         VC-->>CB: 200 OK — Tags removed
         CB-->>vRO: Tags removed
-        vRO->>SAGA: recordStep("removeTags",<br/>compensate=reApplyTags(vm-123, snapshot))
+        vRO->>SAGA: recordStep("removeTags", compensate=reApplyTags(vm-123, snapshot))
     end
 
     rect rgb(255, 250, 230)
@@ -92,7 +92,7 @@ sequenceDiagram
         CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
         NSX-->>CB: groups[]
         CB-->>vRO: groups (should be empty)
-        vRO->>vRO: Confirm VM removed from<br/>all dynamic security groups
+        vRO->>vRO: Confirm VM removed from all dynamic security groups
     end
 
     rect rgb(255, 250, 230)
@@ -101,7 +101,7 @@ sequenceDiagram
         CB->>NSX: GET /policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines/{id}/rules
         NSX-->>CB: Effective DFW rules
         CB-->>vRO: rules[] (should be minimal/default only)
-        vRO->>vRO: Confirm no application or<br/>environment rules remain
+        vRO->>vRO: Confirm no application or environment rules remain
     end
 
     rect rgb(230, 255, 230)
@@ -110,15 +110,15 @@ sequenceDiagram
         CB->>VC: DELETE /rest/vcenter/vm/{id}
         VC-->>CB: 200 OK — VM deleted
         CB-->>vRO: VM deleted
-        Note over vRO: No saga step recorded —<br/>VM deletion is final and<br/>not automatically reversible
+        Note over vRO: No saga step recorded — VM deletion is final and not automatically reversible
     end
 
     rect rgb(230, 255, 230)
         Note over vRO,SNOW: Step 8 — Success Callback
         vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=SUCCESS,<br/>vmId, tagsRemoved, groupsRemoved,<br/>orphanedRulesWarning (if any)
+        Note over SNOW: Payload: correlationId, status=SUCCESS, vmId, tagsRemoved, groupsRemoved, orphanedRulesWarning
         SNOW->>SNOW: Update RITM to Closed Complete
-        SNOW->>SNOW: Update CMDB CI status:<br/>Decommissioned
+        SNOW->>SNOW: Update CMDB CI status: Decommissioned
     end
 
     rect rgb(255, 230, 230)
@@ -134,7 +134,7 @@ sequenceDiagram
         DLQ-->>vRO: DLQ-entry-id
 
         vRO->>SNOW: POST /api/x_dfw/callback (FAILURE)
-        Note over SNOW: VM preserved — tags restored<br/>Manual intervention required
+        Note over SNOW: VM preserved — tags restored, manual intervention required
     end
 ```
 

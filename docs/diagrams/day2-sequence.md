@@ -15,7 +15,7 @@ sequenceDiagram
     participant DLQ as Dead Letter Queue
 
     SNOW->>vRO: POST /trigger (Day2 payload)
-    Note over SNOW,vRO: requestType=day2-update<br/>vmId, site, newTags{}
+    Note over SNOW,vRO: requestType=day2-update vmId, site, newTags{}
 
     vRO->>vRO: Generate correlationId
     vRO->>VAL: validate(payload)
@@ -47,16 +47,16 @@ sequenceDiagram
     rect rgb(255, 250, 230)
         Note over vRO,TCE: Step 2 — Impact Analysis
         vRO->>TCE: enforceCardinality(currentVcTags, newTags)
-        TCE->>TCE: Validate single-value categories<br/>(no duplicate Environment, Tier, etc.)
-        TCE->>TCE: Check conflict rules<br/>(PCI+Sandbox, HIPAA+Sandbox)
-        TCE->>TCE: Validate "None" mutual exclusivity<br/>in Compliance category
+        TCE->>TCE: Validate single-value categories (no duplicate Environment, Tier, etc.)
+        TCE->>TCE: Check conflict rules (PCI+Sandbox, HIPAA+Sandbox)
+        TCE->>TCE: Validate "None" mutual exclusivity in Compliance category
         TCE-->>vRO: Validated merged tag set
 
         vRO->>vRO: computeDelta(currentVcTags, mergedTags)
         Note over vRO: Delta: {add: [...], remove: [...], unchanged: [...]}
 
         vRO->>vRO: Predict group membership changes
-        Note over vRO: Compare tag-based group criteria<br/>against new tag set to predict<br/>groups to be added/removed
+        Note over vRO: Compare tag-based group criteria against new tag set to predict groups to be added/removed
     end
 
     rect rgb(230, 255, 230)
@@ -67,13 +67,13 @@ sequenceDiagram
         CB-->>vRO: freshTags
 
         vRO->>vRO: Compare freshTags with original snapshot
-        Note over vRO: If tags changed since snapshot,<br/>recompute delta to avoid conflicts
+        Note over vRO: If tags changed since snapshot, recompute delta to avoid conflicts
 
         vRO->>CB: execute(updateTags)
-        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association<br/>(detach removed, attach added)
+        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association (detach removed, attach added)
         VC-->>CB: 200 OK — Tags updated
         CB-->>vRO: Tags updated
-        vRO->>SAGA: recordStep("applyTagDeltas",<br/>compensate=revertTags(vm-123, snapshot))
+        vRO->>SAGA: recordStep("applyTagDeltas", compensate=revertTags(vm-123, snapshot))
     end
 
     rect rgb(255, 250, 230)
@@ -96,7 +96,7 @@ sequenceDiagram
         CB-->>vRO: updatedGroups
 
         vRO->>vRO: Compare predicted groups ↔ actual groups
-        Note over vRO: Verify VM was added to expected<br/>new groups and removed from<br/>groups no longer matching
+        Note over vRO: Verify VM was added to expected new groups and removed from groups no longer matching
     end
 
     rect rgb(255, 250, 230)
@@ -105,13 +105,13 @@ sequenceDiagram
         CB->>NSX: GET /policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines/{id}/rules
         NSX-->>CB: Effective DFW rules
         CB-->>vRO: rules[]
-        vRO->>vRO: Confirm rule set matches<br/>new group membership
+        vRO->>vRO: Confirm rule set matches new group membership
     end
 
     rect rgb(230, 255, 230)
         Note over vRO,SNOW: Step 7 — Success Callback
         vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=SUCCESS,<br/>vmId, previousTags, newTags,<br/>groupsAdded[], groupsRemoved[]
+        Note over SNOW: Payload: correlationId, status=SUCCESS, vmId, previousTags, newTags, groupsAdded[], groupsRemoved[]
         SNOW->>SNOW: Update RITM to Closed Complete
         SNOW->>SNOW: Update CMDB CI tags attribute
     end

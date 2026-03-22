@@ -5,66 +5,66 @@ This diagram shows the complete NSX DFW Automation Pipeline architecture, includ
 ```mermaid
 flowchart TB
     subgraph ServiceNow["ServiceNow (Zurich Patch 6)"]
-        DICT[Enterprise Tag<br/>Dictionary<br/><i>u_tag_dictionary</i>]
-        CATALOG[VM Build Request<br/>Catalog Items<br/><i>Day0 / Day2 / DayN</i>]
-        CLIENT_SCRIPTS[Client-Side Scripts<br/><i>onLoad / onChange / onSubmit</i>]
-        APPROVAL[Approval<br/>Workflow Engine]
-        CALLBACK_EP[Scripted REST<br/>Callback Endpoint<br/><i>/api/x_dfw/callback</i>]
-        CMDB[CMDB CI<br/>Records]
+        DICT["Enterprise Tag Dictionary\nu_tag_dictionary"]
+        CATALOG["VM Build Request Catalog Items\nDay0 / Day2 / DayN"]
+        CLIENT_SCRIPTS["Client-Side Scripts\nonLoad / onChange / onSubmit"]
+        APPROVAL["Approval\nWorkflow Engine"]
+        CALLBACK_EP["Scripted REST Callback Endpoint\n/api/x_dfw/callback"]
+        CMDB["CMDB CI\nRecords"]
     end
 
     subgraph vRO["vRealize Orchestrator 8.x Cluster"]
-        REST_LISTENER[REST API Listener<br/><i>POST /trigger</i>]
-        VALIDATOR[Payload Validator<br/><i>Schema + Business Rules</i>]
-        FACTORY[Orchestrator Factory<br/><i>Day0 / Day2 / DayN</i>]
+        REST_LISTENER["REST API Listener\nPOST /trigger"]
+        VALIDATOR["Payload Validator\nSchema + Business Rules"]
+        FACTORY["Orchestrator Factory\nDay0 / Day2 / DayN"]
 
         subgraph LIFECYCLE["Lifecycle Orchestrators"]
-            DAY0[Day0Orchestrator<br/><i>Provision + Tag + Verify</i>]
-            DAY2[Day2Orchestrator<br/><i>Impact Analysis + Update</i>]
-            DAYN[DayNOrchestrator<br/><i>Dependency Check + Decomm</i>]
+            DAY0["Day0Orchestrator\nProvision + Tag + Verify"]
+            DAY2["Day2Orchestrator\nImpact Analysis + Update"]
+            DAYN["DayNOrchestrator\nDependency Check + Decomm"]
         end
 
         subgraph TAG_LAYER["Tag Management"]
-            TAG_OPS[TagOperations<br/><i>Read-Compare-Write</i>]
-            TAG_CARD[TagCardinalityEnforcer<br/><i>Single/Multi + Conflicts</i>]
+            TAG_OPS["TagOperations\nRead-Compare-Write"]
+            TAG_CARD["TagCardinalityEnforcer\nSingle/Multi + Conflicts"]
         end
 
         subgraph DFW_LAYER["DFW Validation"]
-            DFW_VAL[DFWPolicyValidator<br/><i>Coverage + Orphan Checks</i>]
-            RULE_DETECT[RuleConflictDetector<br/><i>Shadow / Contradict / Dup</i>]
+            DFW_VAL["DFWPolicyValidator\nCoverage + Orphan Checks"]
+            RULE_DETECT["RuleConflictDetector\nShadow / Contradict / Dup"]
         end
 
         subgraph RESILIENCE["Resilience Infrastructure"]
-            CB[CircuitBreaker<br/><i>Per-Endpoint State Machine</i>]
-            RETRY[RetryHandler<br/><i>Exponential Backoff</i>]
-            REST_CLIENT[RestClient<br/><i>GET / POST / PATCH / DELETE</i>]
+            CB["CircuitBreaker\nPer-Endpoint State Machine"]
+            RETRY["RetryHandler\nExponential Backoff"]
+            REST_CLIENT["RestClient\nGET / POST / PATCH / DELETE"]
         end
 
         subgraph ERROR_INFRA["Error & Compensation"]
-            SAGA[SagaCoordinator<br/><i>Journal + LIFO Compensate</i>]
-            DLQ[Dead Letter Queue<br/><i>Failed Operations Store</i>]
-            ERR_FACTORY[ErrorFactory<br/><i>DFW-XXXX Taxonomy</i>]
+            SAGA["SagaCoordinator\nJournal + LIFO Compensate"]
+            DLQ["Dead Letter Queue\nFailed Operations Store"]
+            ERR_FACTORY["ErrorFactory\nDFW-XXXX Taxonomy"]
         end
 
         subgraph SHARED["Shared Services"]
-            LOGGER[Logger<br/><i>Structured JSON</i>]
-            CONFIG[ConfigLoader<br/><i>Site Endpoints + Vault Refs</i>]
-            CORR[CorrelationContext<br/><i>RITM-{n}-{epoch}</i>]
+            LOGGER["Logger\nStructured JSON"]
+            CONFIG["ConfigLoader\nSite Endpoints + Vault Refs"]
+            CORR["CorrelationContext\nRITM-{n}-{epoch}"]
         end
     end
 
     subgraph VCF["VMware Cloud Foundation"]
         subgraph NDCNG["NDCNG Data Center"]
-            VC_N[vCenter Server<br/>NDCNG]
-            NSX_N[NSX Manager<br/>NDCNG Cluster]
-            ESXI_N[ESXi Hosts<br/>DFW Kernel Modules]
+            VC_N["vCenter Server\nNDCNG"]
+            NSX_N["NSX Manager\nNDCNG Cluster"]
+            ESXI_N["ESXi Hosts\nDFW Kernel Modules"]
         end
         subgraph TULNG["TULNG Data Center"]
-            VC_T[vCenter Server<br/>TULNG]
-            NSX_T[NSX Manager<br/>TULNG Cluster]
-            ESXI_T[ESXi Hosts<br/>DFW Kernel Modules]
+            VC_T["vCenter Server\nTULNG"]
+            NSX_T["NSX Manager\nTULNG Cluster"]
+            ESXI_T["ESXi Hosts\nDFW Kernel Modules"]
         end
-        NSX_GM[NSX Federation<br/>Global Manager<br/><i>Active / Standby</i>]
+        NSX_GM["NSX Federation\nGlobal Manager\nActive / Standby"]
     end
 
     %% ServiceNow internal flow
@@ -74,7 +74,7 @@ flowchart TB
     CALLBACK_EP -->|Update CI| CMDB
 
     %% ServiceNow to vRO
-    APPROVAL -->|REST POST /trigger<br/>TLS 1.2+| REST_LISTENER
+    APPROVAL -->|"REST POST /trigger TLS 1.2+"| REST_LISTENER
     REST_LISTENER --> VALIDATOR
     VALIDATOR --> FACTORY
     FACTORY --> DAY0

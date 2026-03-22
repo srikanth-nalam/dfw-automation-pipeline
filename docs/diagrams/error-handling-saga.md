@@ -57,29 +57,29 @@ sequenceDiagram
     R->>CB: execute(verifyPropagation) [attempt 3, +15s backoff]
     CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
     NSX--xCB: 504 Gateway Timeout
-    CB->>CB: failureCount >= threshold<br/>State: CLOSED → OPEN
-    CB->>LOG: log(ERROR, "Circuit breaker OPEN",<br/>{endpoint: "nsx-ndcng"})
+    CB->>CB: failureCount >= threshold, State: CLOSED → OPEN
+    CB->>LOG: log(ERROR, "Circuit breaker OPEN", {endpoint: "nsx-ndcng"})
     CB--xR: DFW-6004 Circuit breaker open
 
-    R->>EF: createError("DFW-7004", "Tag propagation sync timeout",<br/>{step: "verifyPropagation", retryCount: 3})
+    R->>EF: createError("DFW-7004", "Tag propagation sync timeout", {step: "verifyPropagation", retryCount: 3})
     EF-->>R: enrichedError
     R--xO: DFW-7004 after 3 retries
 
     Note over O,S: === SAGA COMPENSATION (LIFO) ===
 
     O->>S: compensate()
-    S->>LOG: log(WARN, "Beginning compensation",<br/>{steps: 2, correlationId})
+    S->>LOG: log(WARN, "Beginning compensation", {steps: 2, correlationId})
 
     rect rgb(255, 240, 230)
         Note over S,VC: Compensate Step 1 (index 1): Remove Tags
         S->>R: execute(removeTags(vm-123, categories))
         R->>CB: execute(removeTags)
-        Note over CB: Using vCenter circuit breaker<br/>(separate from NSX — still CLOSED)
+        Note over CB: Using vCenter circuit breaker\n(separate from NSX — still CLOSED)
         CB->>VC: PATCH /tags (detach all tags)
         VC-->>CB: 200 OK
         CB-->>R: success
         R-->>S: Tags removed
-        S->>LOG: log(INFO, "Compensation succeeded",<br/>{step: "applyTags", index: 1})
+        S->>LOG: log(INFO, "Compensation succeeded", {step: "applyTags", index: 1})
     end
 
     rect rgb(255, 240, 230)
@@ -90,16 +90,16 @@ sequenceDiagram
         VC-->>CB: 200 OK
         CB-->>R: success
         R-->>S: VM deleted
-        S->>LOG: log(INFO, "Compensation succeeded",<br/>{step: "provisionVM", index: 0})
+        S->>LOG: log(INFO, "Compensation succeeded", {step: "provisionVM", index: 0})
     end
 
     S-->>O: compensationResult: {succeeded: 2, failed: 0, details: [...]}
 
     Note over O,DLQ: === DLQ PLACEMENT ===
 
-    O->>DLQ: enqueue({<br/>  correlationId,<br/>  operation: "day0-provision",<br/>  vmId: "vm-123",<br/>  site: "NDCNG",<br/>  error: {code: "DFW-7004", message: "..."},<br/>  completedSteps: ["provisionVM", "applyTags"],<br/>  compensationResult: {succeeded: 2, failed: 0},<br/>  retryCount: 3<br/>})
+    O->>DLQ: enqueue({correlationId, operation: "day0-provision", vmId: "vm-123", site: "NDCNG", error: {code: "DFW-7004"}, completedSteps: [...], compensationResult: {succeeded: 2, failed: 0}, retryCount: 3})
     DLQ-->>O: DLQ-entry-id: dlq-456
-    DLQ->>LOG: log(ERROR, "DLQ entry created",<br/>{dlqId: "dlq-456", correlationId})
+    DLQ->>LOG: log(ERROR, "DLQ entry created", {dlqId: "dlq-456", correlationId})
 
     Note over O,SNOW: === ERROR CALLBACK ===
 
@@ -107,7 +107,7 @@ sequenceDiagram
     EF-->>O: callbackPayload
 
     O->>SNOW: POST /api/x_dfw/callback
-    Note over SNOW: {<br/>  correlationId: "RITM-1234-171...",<br/>  status: "FAILURE",<br/>  error: {<br/>    code: "DFW-7004",<br/>    message: "Tag propagation sync timeout",<br/>    step: "verifyPropagation"<br/>  },<br/>  compensationAction: "COMPENSATED",<br/>  compensationResult: {<br/>    succeeded: 2, failed: 0<br/>  },<br/>  dlqEntryId: "dlq-456"<br/>}
+    Note over SNOW: {correlationId: "RITM-1234-171...", status: "FAILURE", error: {code: "DFW-7004", message: "Tag propagation sync timeout", step: "verifyPropagation"}, compensationAction: "COMPENSATED", compensationResult: {succeeded: 2, failed: 0}, dlqEntryId: "dlq-456"}
     SNOW->>SNOW: Update RITM status: Failed
     SNOW->>SNOW: Attach error details to work notes
 ```
@@ -131,16 +131,16 @@ sequenceDiagram
 
     S->>R: execute(compensate step 1: removeTags)
     R--xS: FAILURE (vCenter unavailable)
-    S->>LOG: log(ERROR, "Compensation FAILED",<br/>{step: 1, error: "vCenter unreachable"})
+    S->>LOG: log(ERROR, "Compensation FAILED", {step: 1, error: "vCenter unreachable"})
     Note over S: Record failure but CONTINUE
 
     S->>R: execute(compensate step 0: deleteVM)
     R-->>S: Success
     S->>LOG: log(INFO, "Compensation succeeded", {step: 0})
 
-    S-->>S: compensationResult:<br/>{succeeded: 2, failed: 1,<br/>details: [{step: "removeTags", error: "..."}]}
+    S-->>S: compensationResult: {succeeded: 2, failed: 1, details: [{step: "removeTags", error: "..."}]}
 
-    Note over S,LOG: Failed compensations are flagged<br/>in DLQ for manual remediation
+    Note over S,LOG: Failed compensations are flagged\nin DLQ for manual remediation
 ```
 
 ## Error Code Reference

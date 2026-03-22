@@ -5,65 +5,65 @@ This diagram traces the complete data flow through the NSX DFW Automation Pipeli
 ```mermaid
 flowchart LR
     subgraph SOURCE["Data Sources"]
-        DICT[Tag Dictionary<br/><i>u_tag_dictionary</i><br/>Categories, Values,<br/>Cardinality, Mandatory]
-        POLICY_REPO[Policy Repository<br/><i>policies/dfw-rules/*.yaml</i><br/>DFW Rules, Groups,<br/>Service Definitions]
+        DICT["Tag Dictionary\nu_tag_dictionary\nCategories, Values,\nCardinality, Mandatory"]
+        POLICY_REPO["Policy Repository\npolicies/dfw-rules/*.yaml\nDFW Rules, Groups,\nService Definitions"]
     end
 
     subgraph REQUEST["Request Layer"]
-        FORM[Catalog Form<br/><i>VM Build Request</i>]
-        CLIENT[Client Scripts<br/><i>onLoad: defaults</i><br/><i>onChange: validate</i><br/><i>onSubmit: check</i>]
-        RITM[RITM Record<br/><i>Request Item</i>]
-        APPROVER[Approval Engine<br/><i>Manager + Security</i>]
+        FORM["Catalog Form\nVM Build Request"]
+        CLIENT["Client Scripts\nonLoad: defaults\nonChange: validate\nonSubmit: check"]
+        RITM["RITM Record\nRequest Item"]
+        APPROVER["Approval Engine\nManager + Security"]
     end
 
     subgraph ORCHESTRATION["Orchestration Layer"]
-        PAYLOAD[vRO Payload<br/><i>JSON: vmId, site,</i><br/><i>tags, requestType</i>]
-        VALIDATOR[Payload Validator<br/><i>Schema + Business</i>]
-        ORCHESTRATOR[Lifecycle<br/>Orchestrator<br/><i>Day0/Day2/DayN</i>]
-        TAGGER[Tag Operations<br/><i>Read-Compare-Write</i>]
-        CARDINALITY[Cardinality<br/>Enforcer<br/><i>Single/Multi/Conflicts</i>]
+        PAYLOAD["vRO Payload\nJSON: vmId, site,\ntags, requestType"]
+        VALIDATOR["Payload Validator\nSchema + Business"]
+        ORCHESTRATOR["Lifecycle Orchestrator\nDay0/Day2/DayN"]
+        TAGGER["Tag Operations\nRead-Compare-Write"]
+        CARDINALITY["Cardinality Enforcer\nSingle/Multi/Conflicts"]
     end
 
     subgraph VMWARE["VMware Infrastructure"]
-        VC_TAGS[vCenter Tags<br/><i>VAPI Tag Association</i>]
-        NSX_TAGS[NSX Tags<br/><i>Auto-propagated from vC</i>]
-        GROUPS[Dynamic Security<br/>Groups<br/><i>Tag-based membership</i><br/><i>criteria evaluation</i>]
-        DFW[DFW Policies<br/><i>Infrastructure + Env +</i><br/><i>Application + Emergency</i>]
-        ESXI[ESXi Data Plane<br/><i>DFW Kernel Module</i><br/><i>Realized Rules</i>]
+        VC_TAGS["vCenter Tags\nVAPI Tag Association"]
+        NSX_TAGS["NSX Tags\nAuto-propagated from vC"]
+        GROUPS["Dynamic Security Groups\nTag-based membership\ncriteria evaluation"]
+        DFW["DFW Policies\nInfrastructure + Env +\nApplication + Emergency"]
+        ESXI["ESXi Data Plane\nDFW Kernel Module\nRealized Rules"]
     end
 
     subgraph FEEDBACK["Feedback Loop"]
-        CALLBACK[Callback Payload<br/><i>correlationId, status,</i><br/><i>tags, groups, rules</i>]
-        RITM_UPDATE[RITM Updated<br/><i>Closed Complete or</i><br/><i>Failed with details</i>]
-        CMDB[CMDB CI Record<br/><i>Tags, Groups,</i><br/><i>DFW Status synced</i>]
+        CALLBACK["Callback Payload\ncorrelationId, status,\ntags, groups, rules"]
+        RITM_UPDATE["RITM Updated\nClosed Complete or\nFailed with details"]
+        CMDB["CMDB CI Record\nTags, Groups,\nDFW Status synced"]
     end
 
     subgraph ERROR_PATH["Error Path"]
-        DLQ[Dead Letter Queue<br/><i>Failed payload +</i><br/><i>error + compensation</i>]
-        SPLUNK[Splunk Logs<br/><i>Structured JSON +</i><br/><i>correlationId</i>]
+        DLQ["Dead Letter Queue\nFailed payload +\nerror + compensation"]
+        SPLUNK["Splunk Logs\nStructured JSON +\ncorrelationId"]
     end
 
     %% Source to Request
-    DICT -->|"Reference values<br/>(dropdowns, not free-text)"| FORM
+    DICT -->|"Reference values (dropdowns, not free-text)"| FORM
     FORM --> CLIENT
     CLIENT -->|"Validated user input"| RITM
     RITM -->|"Approval required"| APPROVER
-    APPROVER -->|"Approved: REST POST<br/>with correlation ID"| PAYLOAD
+    APPROVER -->|"Approved: REST POST with correlation ID"| PAYLOAD
 
     %% Request to Orchestration
     PAYLOAD --> VALIDATOR
     VALIDATOR -->|"Valid payload"| ORCHESTRATOR
     ORCHESTRATOR --> TAGGER
     TAGGER --> CARDINALITY
-    CARDINALITY -->|"Validated tag set<br/>(delta computed)"| TAGGER
+    CARDINALITY -->|"Validated tag set (delta computed)"| TAGGER
 
     %% Orchestration to VMware
-    TAGGER -->|"VAPI: attach/detach<br/>tag associations"| VC_TAGS
-    VC_TAGS -->|"Auto-propagation<br/>(vCenter → NSX sync)"| NSX_TAGS
-    NSX_TAGS -->|"Criteria evaluation<br/>(tag match → group add)"| GROUPS
-    GROUPS -->|"Rule binding<br/>(source/dest group match)"| DFW
-    DFW -->|"Rule realization<br/>(pushed to hosts)"| ESXI
-    POLICY_REPO -->|"Schema-validated YAML<br/>(CI pipeline)"| DFW
+    TAGGER -->|"VAPI: attach/detach tag associations"| VC_TAGS
+    VC_TAGS -->|"Auto-propagation (vCenter → NSX sync)"| NSX_TAGS
+    NSX_TAGS -->|"Criteria evaluation (tag match → group add)"| GROUPS
+    GROUPS -->|"Rule binding (source/dest group match)"| DFW
+    DFW -->|"Rule realization (pushed to hosts)"| ESXI
+    POLICY_REPO -->|"Schema-validated YAML (CI pipeline)"| DFW
 
     %% Feedback
     ORCHESTRATOR -->|"POST /callback"| CALLBACK
@@ -71,9 +71,9 @@ flowchart LR
     RITM_UPDATE -->|"Attribute sync"| CMDB
 
     %% Error path
-    ORCHESTRATOR -.->|"After retry exhaustion<br/>+ saga compensation"| DLQ
-    ORCHESTRATOR -.->|"All operations<br/>logged with corrId"| SPLUNK
-    DLQ -.->|"Manual reprocess<br/>or purge"| ORCHESTRATOR
+    ORCHESTRATOR -.->|"After retry exhaustion + saga compensation"| DLQ
+    ORCHESTRATOR -.->|"All operations logged with corrId"| SPLUNK
+    DLQ -.->|"Manual reprocess or purge"| ORCHESTRATOR
 ```
 
 ## Data Transformation Summary

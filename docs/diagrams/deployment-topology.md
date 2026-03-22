@@ -6,11 +6,11 @@ This diagram shows the physical and logical deployment topology of the NSX DFW A
 flowchart TB
     subgraph SNOW_CLOUD["ServiceNow Cloud Instance"]
         direction TB
-        SNOW_APP[ServiceNow Zurich P6<br/><i>Production Instance</i>]
-        SNOW_CATALOG[Catalog Items<br/><i>VM Build / Modify / Decom</i>]
-        SNOW_REST[Scripted REST API<br/><i>/api/x_dfw/callback</i>]
-        SNOW_DICT[Tag Dictionary<br/><i>u_tag_dictionary table</i>]
-        SNOW_CMDB[CMDB<br/><i>CI Records</i>]
+        SNOW_APP["ServiceNow Zurich P6\nProduction Instance"]
+        SNOW_CATALOG["Catalog Items\nVM Build / Modify / Decom"]
+        SNOW_REST["Scripted REST API\n/api/x_dfw/callback"]
+        SNOW_DICT["Tag Dictionary\nu_tag_dictionary table"]
+        SNOW_CMDB["CMDB\nCI Records"]
         SNOW_APP --- SNOW_CATALOG
         SNOW_APP --- SNOW_REST
         SNOW_APP --- SNOW_DICT
@@ -20,29 +20,29 @@ flowchart TB
     subgraph NDCNG_SITE["NDCNG Data Center"]
         direction TB
         subgraph VRO_N_CLUSTER["vRO Cluster (Active/Active)"]
-            vRO_N1[vRO Node 1<br/><i>192.168.10.11</i>]
-            vRO_N2[vRO Node 2<br/><i>192.168.10.12</i>]
-            vRO_N_LB[Load Balancer VIP<br/><i>vro-ndcng.corp.local</i>]
+            vRO_N1["vRO Node 1\n192.168.10.11"]
+            vRO_N2["vRO Node 2\n192.168.10.12"]
+            vRO_N_LB["Load Balancer VIP\nvro-ndcng.corp.local"]
             vRO_N_LB --> vRO_N1
             vRO_N_LB --> vRO_N2
         end
 
         subgraph VCENTER_N["vCenter Server"]
-            VC_N[vCenter Server<br/><i>vcenter-ndcng.corp.local</i><br/>VAPI + REST API]
+            VC_N["vCenter Server\nvcenter-ndcng.corp.local\nVAPI + REST API"]
         end
 
         subgraph NSX_N_CLUSTER["NSX Manager Cluster"]
-            NSX_N1[NSX Manager 1<br/><i>nsx-ndcng-01</i>]
-            NSX_N2[NSX Manager 2<br/><i>nsx-ndcng-02</i>]
-            NSX_N3[NSX Manager 3<br/><i>nsx-ndcng-03</i>]
-            NSX_N_VIP[Cluster VIP<br/><i>nsx-ndcng.corp.local</i>]
+            NSX_N1["NSX Manager 1\nnsx-ndcng-01"]
+            NSX_N2["NSX Manager 2\nnsx-ndcng-02"]
+            NSX_N3["NSX Manager 3\nnsx-ndcng-03"]
+            NSX_N_VIP["Cluster VIP\nnsx-ndcng.corp.local"]
             NSX_N_VIP --> NSX_N1
             NSX_N_VIP --> NSX_N2
             NSX_N_VIP --> NSX_N3
         end
 
         subgraph COMPUTE_N["Compute Clusters"]
-            ESXi_N1[ESXi Host Pool<br/><i>DFW Kernel Modules</i><br/>Transport Nodes]
+            ESXi_N1["ESXi Host Pool\nDFW Kernel Modules\nTransport Nodes"]
         end
 
         vRO_N1 -->|VAPI / TLS 1.2| VC_N
@@ -56,29 +56,29 @@ flowchart TB
     subgraph TULNG_SITE["TULNG Data Center"]
         direction TB
         subgraph VRO_T_CLUSTER["vRO Cluster (Active/Active)"]
-            vRO_T1[vRO Node 1<br/><i>192.168.20.11</i>]
-            vRO_T2[vRO Node 2<br/><i>192.168.20.12</i>]
-            vRO_T_LB[Load Balancer VIP<br/><i>vro-tulng.corp.local</i>]
+            vRO_T1["vRO Node 1\n192.168.20.11"]
+            vRO_T2["vRO Node 2\n192.168.20.12"]
+            vRO_T_LB["Load Balancer VIP\nvro-tulng.corp.local"]
             vRO_T_LB --> vRO_T1
             vRO_T_LB --> vRO_T2
         end
 
         subgraph VCENTER_T["vCenter Server"]
-            VC_T[vCenter Server<br/><i>vcenter-tulng.corp.local</i><br/>VAPI + REST API]
+            VC_T["vCenter Server\nvcenter-tulng.corp.local\nVAPI + REST API"]
         end
 
         subgraph NSX_T_CLUSTER["NSX Manager Cluster"]
-            NSX_T1[NSX Manager 1<br/><i>nsx-tulng-01</i>]
-            NSX_T2[NSX Manager 2<br/><i>nsx-tulng-02</i>]
-            NSX_T3[NSX Manager 3<br/><i>nsx-tulng-03</i>]
-            NSX_T_VIP[Cluster VIP<br/><i>nsx-tulng.corp.local</i>]
+            NSX_T1["NSX Manager 1\nnsx-tulng-01"]
+            NSX_T2["NSX Manager 2\nnsx-tulng-02"]
+            NSX_T3["NSX Manager 3\nnsx-tulng-03"]
+            NSX_T_VIP["Cluster VIP\nnsx-tulng.corp.local"]
             NSX_T_VIP --> NSX_T1
             NSX_T_VIP --> NSX_T2
             NSX_T_VIP --> NSX_T3
         end
 
         subgraph COMPUTE_T["Compute Clusters"]
-            ESXi_T1[ESXi Host Pool<br/><i>DFW Kernel Modules</i><br/>Transport Nodes]
+            ESXi_T1["ESXi Host Pool\nDFW Kernel Modules\nTransport Nodes"]
         end
 
         vRO_T1 -->|VAPI / TLS 1.2| VC_T
@@ -90,34 +90,34 @@ flowchart TB
     end
 
     subgraph FEDERATION["NSX-T Federation"]
-        NSX_GM_A[Global Manager<br/><i>ACTIVE</i><br/>nsx-gm-active.corp.local]
-        NSX_GM_S[Global Manager<br/><i>STANDBY</i><br/>nsx-gm-standby.corp.local]
+        NSX_GM_A["Global Manager\nACTIVE\nnsx-gm-active.corp.local"]
+        NSX_GM_S["Global Manager\nSTANDBY\nnsx-gm-standby.corp.local"]
         NSX_GM_A <-->|Replication| NSX_GM_S
     end
 
     subgraph MONITORING["Monitoring Infrastructure"]
-        SPLUNK[Splunk Indexer<br/><i>index=dfw_pipeline</i>]
-        PAGERDUTY[PagerDuty<br/><i>Alerting / On-Call</i>]
-        DASHBOARD[Splunk Dashboard<br/><i>Circuit Breaker / Throughput</i><br/><i>Error Rate / Latency / DLQ</i>]
+        SPLUNK["Splunk Indexer\nindex=dfw_pipeline"]
+        PAGERDUTY["PagerDuty\nAlerting / On-Call"]
+        DASHBOARD["Splunk Dashboard\nCircuit Breaker / Throughput\nError Rate / Latency / DLQ"]
         SPLUNK --> DASHBOARD
         SPLUNK --> PAGERDUTY
     end
 
     %% ServiceNow to vRO (both sites)
-    SNOW_APP -->|"REST POST /trigger<br/>TLS 1.2+ / mTLS"| vRO_N_LB
-    SNOW_APP -->|"REST POST /trigger<br/>TLS 1.2+ / mTLS"| vRO_T_LB
+    SNOW_APP -->|"REST POST /trigger TLS 1.2+ / mTLS"| vRO_N_LB
+    SNOW_APP -->|"REST POST /trigger TLS 1.2+ / mTLS"| vRO_T_LB
 
     %% vRO callbacks to ServiceNow
-    vRO_N_LB -.->|"POST /callback<br/>TLS 1.2+"| SNOW_REST
-    vRO_T_LB -.->|"POST /callback<br/>TLS 1.2+"| SNOW_REST
+    vRO_N_LB -.->|"POST /callback TLS 1.2+"| SNOW_REST
+    vRO_T_LB -.->|"POST /callback TLS 1.2+"| SNOW_REST
 
     %% NSX Federation sync
-    NSX_N_VIP <-->|"Federation Sync<br/>Inter-site Link"| NSX_GM_A
-    NSX_T_VIP <-->|"Federation Sync<br/>Inter-site Link"| NSX_GM_A
+    NSX_N_VIP <-->|"Federation Sync Inter-site Link"| NSX_GM_A
+    NSX_T_VIP <-->|"Federation Sync Inter-site Link"| NSX_GM_A
 
     %% vRO to Global Manager
-    vRO_N_LB -->|"REST / TLS 1.2<br/>Global Policy API"| NSX_GM_A
-    vRO_T_LB -->|"REST / TLS 1.2<br/>Global Policy API"| NSX_GM_A
+    vRO_N_LB -->|"REST / TLS 1.2 Global Policy API"| NSX_GM_A
+    vRO_T_LB -->|"REST / TLS 1.2 Global Policy API"| NSX_GM_A
 
     %% Logging
     vRO_N_LB -.->|Syslog / HEC| SPLUNK

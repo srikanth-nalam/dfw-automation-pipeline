@@ -40,43 +40,43 @@ Each operation is orchestrated as a distributed saga -- a series of compensable 
 ```mermaid
 graph TB
     subgraph External ["External Systems"]
-        SNOW[ServiceNow<br/>Catalog & ITSM]
+        SNOW["ServiceNow\nCatalog & ITSM"]
     end
 
     subgraph Orchestration ["Orchestration Layer"]
-        VRO[vRealize Orchestrator<br/>Workflow Engine]
+        VRO["vRealize Orchestrator\nWorkflow Engine"]
         subgraph Actions ["vRO Action Modules"]
-            SHARED[Shared Utilities<br/>Logger, ConfigLoader, RetryHandler,<br/>CircuitBreaker, ErrorFactory,<br/>CorrelationContext, PayloadValidator,<br/>RestClient]
-            TAGS[Tag Operations<br/>TagOperations, TagCardinalityEnforcer,<br/>TagPropagationVerifier]
-            GROUPS[Group Operations<br/>GroupMembershipVerifier,<br/>GroupReconciler]
-            DFW[DFW Operations<br/>DFWPolicyValidator,<br/>RuleConflictDetector,<br/>PolicyDeployer]
-            LIFE[Lifecycle Orchestrators<br/>LifecycleOrchestrator (Template Method),<br/>Day0Orchestrator, Day2Orchestrator,<br/>DayNOrchestrator, SagaCoordinator,<br/>DeadLetterQueue]
+            SHARED["Shared Utilities\nLogger, ConfigLoader,\nRetryHandler, CircuitBreaker,\nErrorFactory, RestClient"]
+            TAGS["Tag Operations\nTagOperations,\nTagCardinalityEnforcer,\nTagPropagationVerifier"]
+            GROUPS["Group Operations\nGroupMembershipVerifier,\nGroupReconciler"]
+            DFW["DFW Operations\nDFWPolicyValidator,\nRuleConflictDetector,\nPolicyDeployer"]
+            LIFE["Lifecycle Orchestrators\nDay0/Day2/DayN Orchestrators\nSaga Coordinator, DLQ"]
         end
         subgraph Adapters ["Integration Adapters"]
-            NSXA[NsxApiAdapter]
-            VCA[VcenterApiAdapter]
-            SNA[SnowPayloadAdapter]
+            NSXA["NsxApiAdapter"]
+            VCA["VcenterApiAdapter"]
+            SNA["SnowPayloadAdapter"]
         end
     end
 
     subgraph Compute ["Compute Layer"]
-        VC_NDC[vCenter NDCNG]
-        VC_TUL[vCenter TULNG]
+        VC_NDC["vCenter NDCNG"]
+        VC_TUL["vCenter TULNG"]
     end
 
     subgraph Security ["Network Security Layer"]
-        NSX_NDC[NSX Local Manager<br/>NDCNG]
-        NSX_TUL[NSX Local Manager<br/>TULNG]
-        NSX_GM[NSX Global Manager<br/>NDCNG]
+        NSX_NDC["NSX Local Manager\nNDCNG"]
+        NSX_TUL["NSX Local Manager\nTULNG"]
+        NSX_GM["NSX Global Manager\nNDCNG"]
     end
 
     subgraph PolicyRepo ["Policy Repository"]
-        GIT[Git Repository<br/>YAML Policy-as-Code]
+        GIT["Git Repository\nYAML Policy-as-Code"]
     end
 
     subgraph Monitoring ["Observability"]
-        SPLUNK[Splunk / ELK<br/>Log Aggregation]
-        DASH[Operations Dashboard]
+        SPLUNK["Splunk / ELK\nLog Aggregation"]
+        DASH["Operations Dashboard"]
     end
 
     SNOW -->|REST Payload| VRO
@@ -291,22 +291,22 @@ The complete data flow from business request to realized security policy travers
 
 ```mermaid
 flowchart TB
-    A[Tag Dictionary<br/>Authorized categories & values] --> B[ServiceNow Catalog Form<br/>Dropdown population from dictionary]
-    B --> C[User submits request<br/>Selects tags per VM requirements]
-    C --> D[Client Script validates<br/>Mandatory fields, conflict checks,<br/>cardinality pre-validation]
-    D --> E[Server Script validates<br/>Tag dictionary lookup, business rules,<br/>approval chain verification]
-    E --> F[JSON Payload assembled<br/>correlationId + requestType + vmName +<br/>site + tags + callbackUrl]
-    F --> G[REST call to vRO<br/>POST /workflows/id/executions]
-    G --> H[vRO: PayloadValidator<br/>Schema validation against JSON Schema]
-    H --> I[vRO: Resolve endpoints<br/>ConfigLoader.getEndpointsForSite]
-    I --> J[vRO: Initialize saga<br/>SagaCoordinator.begin]
-    J --> K[vRO: Apply tags to VM<br/>TagOperations.applyTags<br/>Read-compare-write via NSX API]
-    K --> L[vRO: Wait for propagation<br/>TagPropagationVerifier polls<br/>NSX realized-state API]
-    L --> M[vRO: Verify group membership<br/>GroupMembershipVerifier.verifyMembership]
-    M --> N[vRO: Validate DFW coverage<br/>DFWPolicyValidator.validatePolicies]
-    N --> O[vRO: Callback to ServiceNow<br/>POST /api/now/v1/dfw/callback]
-    O --> P[RITM updated<br/>Work notes, status, closure code]
-    L --> Q[Security policy realized<br/>DFW rules enforced on NSX data plane]
+    A["Tag Dictionary\nAuthorized categories & values"] --> B["ServiceNow Catalog Form\nDropdown population from dictionary"]
+    B --> C["User submits request\nSelects tags per VM requirements"]
+    C --> D["Client Script validates\nMandatory fields, conflict checks,\ncardinality pre-validation"]
+    D --> E["Server Script validates\nTag dictionary lookup, business rules,\napproval chain verification"]
+    E --> F["JSON Payload assembled\ncorrelationId + requestType + vmName +\nsite + tags + callbackUrl"]
+    F --> G["REST call to vRO\nPOST /workflows/id/executions"]
+    G --> H["vRO: PayloadValidator\nSchema validation against JSON Schema"]
+    H --> I["vRO: Resolve endpoints\nConfigLoader.getEndpointsForSite"]
+    I --> J["vRO: Initialize saga\nSagaCoordinator.begin"]
+    J --> K["vRO: Apply tags to VM\nTagOperations.applyTags\nRead-compare-write via NSX API"]
+    K --> L["vRO: Wait for propagation\nTagPropagationVerifier polls\nNSX realized-state API"]
+    L --> M["vRO: Verify group membership\nGroupMembershipVerifier.verifyMembership"]
+    M --> N["vRO: Validate DFW coverage\nDFWPolicyValidator.validatePolicies"]
+    N --> O["vRO: Callback to ServiceNow\nPOST /api/now/v1/dfw/callback"]
+    O --> P["RITM updated\nWork notes, status, closure code"]
+    L --> Q["Security policy realized\nDFW rules enforced on NSX data plane"]
 ```
 
 ### 4.2 Tag Dictionary Flow
@@ -332,7 +332,7 @@ sequenceDiagram
     participant NSX as NSX Manager
     participant VC as vCenter
 
-    SNOW->>VRO: POST /workflows/{id}/executions<br/>(correlationId, tags, vmName, site)
+    SNOW->>VRO: POST /workflows/{id}/executions (correlationId, tags, vmName, site)
     VRO->>VRO: PayloadValidator.validate()
     VRO->>VRO: ConfigLoader.getEndpointsForSite(site)
     VRO->>Saga: begin(correlationId)
@@ -369,7 +369,7 @@ sequenceDiagram
     NSX-->>DFW: Active rules list
     DFW-->>VRO: {policies: [...], compliant: true}
 
-    VRO->>SNOW: POST /dfw_callback<br/>{status: 'SUCCESS', appliedTags: [...]}
+    VRO->>SNOW: POST /dfw_callback {status: 'SUCCESS', appliedTags: [...]}
     SNOW-->>VRO: 200 OK
 ```
 
@@ -385,7 +385,7 @@ sequenceDiagram
     participant DFW as DFW Validator
     participant NSX as NSX Manager
 
-    SNOW->>VRO: POST /workflows/{id}/executions<br/>(correlationId, newTags, vmId, site)
+    SNOW->>VRO: POST /workflows/{id}/executions (correlationId, newTags, vmId, site)
     VRO->>VRO: PayloadValidator.validate()
     VRO->>Saga: begin(correlationId)
 
@@ -412,7 +412,7 @@ sequenceDiagram
     VRO->>Groups: verifyMembership(vmId, site)
     VRO->>DFW: validatePolicies(vmId, site)
 
-    VRO->>SNOW: POST /dfw_callback<br/>{status: 'SUCCESS'}
+    VRO->>SNOW: POST /dfw_callback {status: 'SUCCESS'}
 ```
 
 ### 4.5 Day N Decommission Sequence
@@ -428,7 +428,7 @@ sequenceDiagram
     participant NSX as NSX Manager
     participant VC as vCenter
 
-    SNOW->>VRO: POST /workflows/{id}/executions<br/>(correlationId, vmId, site, op: decommission)
+    SNOW->>VRO: POST /workflows/{id}/executions (correlationId, vmId, site, op: decommission)
     VRO->>VRO: PayloadValidator.validate()
     VRO->>Saga: begin(correlationId)
 
@@ -461,7 +461,7 @@ sequenceDiagram
     VRO->>VC: DELETE /api/vcenter/vm/{vmId}
 
     VRO->>SNOW: PATCH /cmdb_ci (status: decommissioned)
-    VRO->>SNOW: POST /dfw_callback<br/>{status: 'SUCCESS', summary: 'decommissioned'}
+    VRO->>SNOW: POST /dfw_callback {status: 'SUCCESS', summary: 'decommissioned'}
 ```
 
 ---
@@ -475,11 +475,11 @@ The pipeline operates across two VMware Cloud Foundation sites with independent 
 ```mermaid
 graph TB
     subgraph NDCNG ["NDCNG (Primary Data Center)"]
-        VRO_NDC[vRO Cluster<br/>Active -- 2 nodes + LB]
-        VC_NDC[vCenter Server<br/>NDCNG]
-        NSX_LM_NDC[NSX Local Manager<br/>NDCNG -- 3 node cluster]
-        NSX_GM[NSX Global Manager<br/>Active]
-        DB_NDC[vRO PostgreSQL DB<br/>Primary]
+        VRO_NDC["vRO Cluster\nActive - 2 nodes + LB"]
+        VC_NDC["vCenter Server\nNDCNG"]
+        NSX_LM_NDC["NSX Local Manager\nNDCNG - 3 node cluster"]
+        NSX_GM["NSX Global Manager\nActive"]
+        DB_NDC["vRO PostgreSQL DB\nPrimary"]
 
         VRO_NDC --> VC_NDC
         VRO_NDC --> NSX_LM_NDC
@@ -488,10 +488,10 @@ graph TB
     end
 
     subgraph TULNG ["TULNG (Secondary Data Center)"]
-        VRO_TUL[vRO Cluster<br/>Standby -- 2 nodes + LB]
-        VC_TUL[vCenter Server<br/>TULNG]
-        NSX_LM_TUL[NSX Local Manager<br/>TULNG -- 3 node cluster]
-        DB_TUL[vRO PostgreSQL DB<br/>Replica]
+        VRO_TUL["vRO Cluster\nStandby - 2 nodes + LB"]
+        VC_TUL["vCenter Server\nTULNG"]
+        NSX_LM_TUL["NSX Local Manager\nTULNG - 3 node cluster"]
+        DB_TUL["vRO PostgreSQL DB\nReplica"]
 
         VRO_TUL --> VC_TUL
         VRO_TUL --> NSX_LM_TUL
@@ -499,11 +499,11 @@ graph TB
     end
 
     subgraph ServiceNow ["ServiceNow (SaaS)"]
-        SNOW[ServiceNow Instance<br/>Catalog + ITSM + CMDB]
+        SNOW["ServiceNow Instance\nCatalog + ITSM + CMDB"]
     end
 
     subgraph Git ["Git Repository (SaaS)"]
-        REPO[GitHub Enterprise<br/>Policy-as-Code YAML]
+        REPO["GitHub Enterprise\nPolicy-as-Code YAML"]
     end
 
     NSX_LM_NDC <-->|Federation Sync| NSX_GM
@@ -611,19 +611,19 @@ The pipeline supports graceful degradation under partial failure conditions:
 ```mermaid
 graph LR
     subgraph Pipeline ["DFW Automation Pipeline"]
-        VRO[vRO Actions]
-        LOG[Structured JSON Logs<br/>Logger module]
-        METRICS[Operational Metrics<br/>CircuitBreaker.getStats<br/>SagaCoordinator outcomes<br/>RetryHandler counts]
-        CORR[Correlation IDs<br/>CorrelationContext]
+        VRO["vRO Actions"]
+        LOG["Structured JSON Logs\nLogger module"]
+        METRICS["Operational Metrics\nCircuitBreaker.getStats\nSagaCoordinator outcomes\nRetryHandler counts"]
+        CORR["Correlation IDs\nCorrelationContext"]
     end
 
     subgraph Aggregation ["Log Aggregation"]
-        SPLUNK[Splunk / ELK<br/>Centralized log store]
+        SPLUNK["Splunk / ELK\nCentralized log store"]
     end
 
     subgraph Monitoring ["Monitoring & Alerting"]
-        DASH[Operations Dashboard<br/>Grafana / Splunk Dashboard]
-        ALERTS[Alert Rules<br/>Threshold-based triggers]
+        DASH["Operations Dashboard\nGrafana / Splunk Dashboard"]
+        ALERTS["Alert Rules\nThreshold-based triggers"]
     end
 
     subgraph Notification ["Notification"]

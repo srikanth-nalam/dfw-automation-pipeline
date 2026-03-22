@@ -1000,7 +1000,7 @@ sequenceDiagram
 
     Note over D2: Step 1b: Drift Detection
     D2->>D2: _detectDrift(vmId, actualTags, expectedTags)
-    Note over D2: Compare actual vs CMDB expected<br/>Log warning if mismatch found
+    Note over D2: Compare actual vs CMDB expected Log warning if mismatch found
 
     Note over D2,GMV: Step 2: Impact Analysis
     D2->>GMV: predictGroupChanges(currentTags, newTags)
@@ -1145,7 +1145,7 @@ sequenceDiagram
     VRO->>DLQ: enqueue(payload, DFW-7004, correlationId)
     DLQ-->>VRO: 'dlq-abc123'
 
-    VRO->>SNOW: POST /dfw_callback<br/>{status:'FAILURE', errorCode:'DFW-7004',<br/>compensatingActionTaken:'ROLLBACK_TAGS',<br/>compensatingActionResult:'SUCCESS'}
+    VRO->>SNOW: POST /dfw_callback {status:'FAILURE', errorCode:'DFW-7004', compensatingActionTaken:'ROLLBACK_TAGS', compensatingActionResult:'SUCCESS'}
 ```
 
 ### 4.2 Compensation Partial Failure
@@ -1172,7 +1172,7 @@ sequenceDiagram
     Note over Saga: Step 1 compensated
 
     Note over Saga: Result: {compensated: 2, failed: 1, errors: [{stepName:'applyTags', error:'NSX 503'}]}
-    Note over Saga: Failed compensations are logged and<br/>the DLQ entry includes the compensation<br/>failure details for manual resolution
+    Note over Saga: Failed compensations are logged and the DLQ entry includes the compensation failure details for manual resolution
 ```
 
 ### 4.3 Circuit Breaker Error Flow
@@ -1207,7 +1207,7 @@ sequenceDiagram
     Note over CB: State: OPEN -- all calls rejected
 
     Client->>CB: execute(fn)
-    CB-->>Client: IMMEDIATE REJECT: DFW-6004<br/>"Circuit breaker open: calls to<br/>endpoint nsx-manager-ndcng suspended"
+    CB-->>Client: IMMEDIATE REJECT: DFW-6004 "Circuit breaker open: calls to endpoint nsx-manager-ndcng suspended"
 
     Note over CB: ... 60 seconds pass (resetTimeout) ...
 
@@ -1352,14 +1352,14 @@ logging:
 stateDiagram-v2
     [*] --> CLOSED: Initialize
 
-    CLOSED --> CLOSED: Success<br/>(reset consecutiveFailures)
-    CLOSED --> CLOSED: Failure<br/>(below threshold in window)
-    CLOSED --> OPEN: Failure<br/>(threshold reached in window)
+    CLOSED --> CLOSED: Success (reset consecutiveFailures)
+    CLOSED --> CLOSED: Failure (below threshold in window)
+    CLOSED --> OPEN: Failure (threshold reached in window)
 
-    OPEN --> OPEN: Call attempt<br/>(rejected with DFW-6004)
+    OPEN --> OPEN: Call attempt (rejected with DFW-6004)
     OPEN --> HALF_OPEN: resetTimeout elapsed
 
-    HALF_OPEN --> CLOSED: Probe succeeds<br/>(reset all counters)
+    HALF_OPEN --> CLOSED: Probe succeeds (reset all counters)
     HALF_OPEN --> OPEN: Probe fails
 
     note right of CLOSED
@@ -1409,7 +1409,7 @@ stateDiagram-v2
     COMPENSATING --> PARTIALLY_COMPENSATED: 1+ compensations fail
 
     COMPENSATED --> INACTIVE: Saga complete
-    PARTIALLY_COMPENSATED --> INACTIVE: Saga complete<br/>(failures logged + DLQ'd)
+    PARTIALLY_COMPENSATED --> INACTIVE: Saga complete (failures logged + DLQ'd)
 
     note right of ACTIVE
         Steps recorded in journal (FIFO order).

@@ -17,10 +17,10 @@ sequenceDiagram
     SNOW->>vRO: POST /trigger (Day0 payload)
     Note over SNOW,vRO: TLS 1.2+ / X-Correlation-ID header
 
-    vRO->>vRO: Generate correlationId<br/>(RITM-{number}-{epoch})
+    vRO->>vRO: Generate correlationId (RITM-{number}-{epoch})
     vRO->>VAL: validate(payload)
     VAL->>VAL: Schema validation (ajv)
-    VAL->>VAL: Business rule checks<br/>(mandatory tags, valid site)
+    VAL->>VAL: Business rule checks (mandatory tags, valid site)
     VAL-->>vRO: Validation passed
 
     vRO->>SAGA: begin(correlationId)
@@ -32,7 +32,7 @@ sequenceDiagram
         CB->>VC: POST /rest/vcenter/vm (provision VM)
         VC-->>CB: 201 Created — vmId: vm-123
         CB-->>vRO: vmId: vm-123
-        vRO->>SAGA: recordStep("provisionVM",<br/>compensate=deleteVM(vm-123))
+        vRO->>SAGA: recordStep("provisionVM", compensate=deleteVM(vm-123))
     end
 
     rect rgb(230, 245, 255)
@@ -49,8 +49,8 @@ sequenceDiagram
     rect rgb(230, 255, 230)
         Note over vRO,NSX: Step 3 — Apply Tags
         vRO->>TCE: enforceCardinality(current=[], desired=tags)
-        TCE->>TCE: Validate single-value categories<br/>(Application, Tier, Environment, etc.)
-        TCE->>TCE: Check conflict rules<br/>(PCI+Sandbox, HIPAA+Sandbox, etc.)
+        TCE->>TCE: Validate single-value categories (Application, Tier, Environment, etc.)
+        TCE->>TCE: Check conflict rules (PCI+Sandbox, HIPAA+Sandbox, etc.)
         TCE-->>vRO: Validated tag set
 
         vRO->>CB: execute(getCurrentTags)
@@ -62,7 +62,7 @@ sequenceDiagram
         CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association (attach tags)
         VC-->>CB: 200 OK — Tags applied
         CB-->>vRO: Tags applied
-        vRO->>SAGA: recordStep("applyTags",<br/>compensate=removeTags(vm-123, categories))
+        vRO->>SAGA: recordStep("applyTags", compensate=removeTags(vm-123, categories))
     end
 
     rect rgb(255, 250, 230)
@@ -83,7 +83,7 @@ sequenceDiagram
         CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
         NSX-->>CB: Security group list
         CB-->>vRO: groups[]
-        vRO->>vRO: Validate expected groups<br/>match actual groups
+        vRO->>vRO: Validate expected groups match actual groups
     end
 
     rect rgb(255, 250, 230)
@@ -92,13 +92,13 @@ sequenceDiagram
         CB->>NSX: GET /policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines/{id}/rules
         NSX-->>CB: Effective DFW rules
         CB-->>vRO: rules[]
-        vRO->>vRO: Confirm Infrastructure +<br/>Environment rules present
+        vRO->>vRO: Confirm Infrastructure + Environment rules present
     end
 
     rect rgb(230, 255, 230)
         Note over vRO,SNOW: Step 7 — Success Callback
         vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=SUCCESS,<br/>vmId, tags, groups, dfwRuleCount
+        Note over SNOW: Payload: correlationId, status=SUCCESS, vmId, tags, groups, dfwRuleCount
         SNOW->>SNOW: Update RITM to Closed Complete
         SNOW->>SNOW: Create/update CMDB CI record
     end
@@ -119,7 +119,7 @@ sequenceDiagram
         DLQ-->>vRO: DLQ-entry-id
 
         vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=FAILURE,<br/>error.code, compensationResult
+        Note over SNOW: Payload: correlationId, status=FAILURE, error.code, compensationResult
         SNOW->>SNOW: Update RITM to Failed
     end
 ```
