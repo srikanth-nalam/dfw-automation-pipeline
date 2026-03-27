@@ -236,4 +236,138 @@ describe('PayloadValidator', () => {
       expect(result.errors.length).toBeGreaterThanOrEqual(2);
     });
   });
+
+  describe('new request types', () => {
+    test('should accept quarantine as valid requestType', () => {
+      const payload = buildValidPayload({
+        requestType: 'quarantine',
+        vmId: 'vm-123'
+      });
+      // quarantine does not require tags
+      delete payload.tags;
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+
+    test('should accept impact_analysis as valid requestType', () => {
+      const payload = {
+        correlationId: 'RITM-99999-1679000000',
+        requestType: 'impact_analysis',
+        site: 'NDCNG',
+        vmId: 'vm-456',
+        vmName: 'test-vm-001',
+        tags: {
+          Tier: 'Web',
+          Environment: 'Production'
+        }
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+
+    test('should accept drift_scan as valid requestType', () => {
+      const payload = {
+        correlationId: 'RITM-88888-1679000000',
+        requestType: 'drift_scan',
+        site: 'NDCNG'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+
+    test('should accept migration_verify as valid requestType', () => {
+      const payload = {
+        correlationId: 'RITM-77777-1679000000',
+        requestType: 'migration_verify',
+        site: 'TULNG',
+        vmId: 'vm-789'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+
+    test('day_n_decommission should not require tags', () => {
+      const payload = {
+        correlationId: 'RITM-66666-1679000000',
+        requestType: 'day_n_decommission',
+        site: 'NDCNG',
+        vmName: 'test-vm-decom',
+        callbackUrl: 'https://snow.company.internal/api/callback'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('vmId as alternative identifier', () => {
+    test('should accept vmId instead of vmName for quarantine', () => {
+      const payload = {
+        correlationId: 'RITM-55555-1679000000',
+        requestType: 'quarantine',
+        site: 'NDCNG',
+        vmId: 'vm-123',
+        callbackUrl: 'https://snow.company.internal/api/callback'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+
+    test('should fail when neither vmName nor vmId provided for quarantine', () => {
+      const payload = {
+        correlationId: 'RITM-44444-1679000000',
+        requestType: 'quarantine',
+        site: 'NDCNG',
+        callbackUrl: 'https://snow.company.internal/api/callback'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(false);
+      expect(result.errors.some(e => e.code === 'DFW-4001')).toBe(true);
+    });
+
+    test('drift_scan should not require any VM identifier', () => {
+      const payload = {
+        correlationId: 'RITM-33333-1679000000',
+        requestType: 'drift_scan',
+        site: 'NDCNG'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+  });
+
+  describe('conditional tag validation', () => {
+    test('day2_tag_update requires tags but not all 5 mandatory fields', () => {
+      const payload = {
+        correlationId: 'RITM-22222-1679000000',
+        requestType: 'day2_tag_update',
+        site: 'NDCNG',
+        vmName: 'test-vm-001',
+        tags: { Tier: 'Application' },
+        callbackUrl: 'https://snow.company.internal/api/callback'
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+
+    test('day0_provision still requires all 5 mandatory tag fields', () => {
+      const payload = buildValidPayload({
+        tags: { Tier: 'Web' }
+      });
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(false);
+    });
+
+    test('impact_analysis validates present tag fields without requiring all', () => {
+      const payload = {
+        correlationId: 'RITM-11111-1679000000',
+        requestType: 'impact_analysis',
+        site: 'NDCNG',
+        vmId: 'vm-999',
+        vmName: 'test-vm-001',
+        tags: { Environment: 'Production', Tier: 'Web' }
+      };
+      const result = validator.validate(payload);
+      expect(result.valid).toBe(true);
+    });
+  });
 });

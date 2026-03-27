@@ -514,10 +514,14 @@ class LifecycleOrchestrator {
         const DayNOrchestrator = require('./DayNOrchestrator');
         return new DayNOrchestrator(dependencies);
       }
+      case 'Quarantine': {
+        const QuarantineOrchestrator = require('./QuarantineOrchestrator');
+        return new QuarantineOrchestrator(dependencies);
+      }
       default:
         throw new Error(
           `[DFW-6105] Unknown request type "${requestType}". ` +
-          'Valid types: Day0, Day2, DayN'
+          'Valid types: Day0, Day2, DayN, Quarantine'
         );
     }
     /* eslint-enable global-require */

@@ -2,8 +2,8 @@
 
 ## NSX DFW Automation Pipeline
 
-**Version:** 1.0
-**Date:** 2026-03-21
+**Version:** 2.0
+**Date:** 2026-03-27
 **Author:** Enterprise Infrastructure & Cloud Security
 **Status:** Approved
 
@@ -12,6 +12,13 @@
 ## Table of Contents
 
 1. [Module-Level Design](#1-module-level-design)
+   - 1.1 [Shared Utilities Module](#11-shared-utilities-module-srcvroactionsshared)
+   - 1.2 [Tag Operations Module](#12-tag-operations-module-srcvroactionstags)
+   - 1.3 [Group Operations Module](#13-group-operations-module-srcvroactionsgroups)
+   - 1.4 [DFW Operations Module](#14-dfw-operations-module-srcvroactionsdfw)
+   - 1.5 [Lifecycle Orchestrators Module](#15-lifecycle-orchestrators-module-srcvroactionslifecycle)
+   - 1.6 [Adapters Module](#16-adapters-module-srcadapters)
+   - 1.7 [Extended Operations Module](#17-extended-operations-module-srcvroactionsextended)
 2. [Class Diagram](#2-class-diagram)
 3. [Sequence Diagrams](#3-sequence-diagrams)
 4. [Error Handling Flows](#4-error-handling-flows)
@@ -230,6 +237,28 @@ class FixedInterval implements RetryStrategy {
 - Enum validation for requestType, site, tier, environment, compliance, and dataClassification.
 - `$defs` references for reusable tag assignment schema.
 
+**Extended Request Types** (added to the `requestType` enum):
+- `quarantine` -- Requires `vmId` (or `vmName`) and `site`. Triggers quarantine tag application and DFW quarantine policy enforcement.
+- `impact_analysis` -- Requires `vmId`, `site`, and `proposedTags`. Read-only analysis with no mutations.
+- `drift_scan` -- Requires `site`. Optional `vmIds` array to scope the scan to specific VMs.
+- `migration_verify` -- Requires `vmId` and `site`. Post-vMotion verification of tag and group integrity.
+
+**Conditional Validation Rules** (`REQUEST_TYPE_RULES`):
+Each request type has its own set of required and optional fields, enforced via conditional schemas. The `REQUEST_TYPE_RULES` map defines the validation constraints per type:
+```javascript
+{
+  DAY0_PROVISION: { required: ['vmName', 'site', 'tags', 'vmTemplate', 'cluster', 'datastore', 'network'] },
+  DAY2_MODIFY:   { required: ['site', 'tags'], requireOneOf: ['vmId', 'vmName'] },
+  DAYN_DECOMMISSION: { required: ['site'], requireOneOf: ['vmId', 'vmName'] },
+  quarantine:     { required: ['site'], requireOneOf: ['vmId', 'vmName'] },
+  impact_analysis: { required: ['vmId', 'site', 'proposedTags'] },
+  drift_scan:     { required: ['site'], optional: ['vmIds'] },
+  migration_verify: { required: ['vmId', 'site'] }
+}
+```
+
+**VM Identifier Flexibility**: The `vmId` field is now accepted as an alternative to `vmName` across all request types that reference an existing VM. The `requireOneOf` constraint ensures that at least one identifier is present without requiring both.
+
 #### 1.1.8 ErrorFactory
 
 **Responsibility**: Creates structured `DfwError` instances conforming to the pipeline's BRD error taxonomy. Provides error classification, retryability determination, and ServiceNow callback payload generation from any error type.
@@ -286,6 +315,39 @@ class DfwError extends Error {
   toJSON(): object;       // Serialization for logging and callbacks
 }
 ```
+
+#### 1.1.9 RateLimiter
+
+**Responsibility**: Token bucket rate limiter for throttling outbound API calls to NSX Manager and vCenter endpoints, preventing request flooding during bulk operations.
+
+**Constructor Parameters**:
+- `maxTokens: number` -- Maximum number of tokens the bucket can hold. This represents the burst capacity: the maximum number of requests that can be issued in rapid succession before throttling kicks in.
+- `refillRate: number` -- Tokens added per second. This represents the sustained throughput: the steady-state rate of requests allowed per second after the burst capacity is exhausted.
+
+**Key Methods**:
+- `async acquire(tokens: number): Promise<void>` -- Acquires the specified number of tokens from the bucket. If insufficient tokens are available, the method awaits until enough tokens have been refilled. The wait time is computed as `(tokens - availableTokens) / refillRate * 1000` milliseconds. This provides natural backpressure without throwing errors, making it suitable for wrapping in loops over large VM sets.
+
+**Internal State**:
+```javascript
+{
+  maxTokens: number,          // Bucket capacity
+  refillRate: number,         // Tokens per second
+  availableTokens: number,    // Current token count
+  lastRefillTimestamp: number  // Epoch ms of last refill calculation
+}
+```
+
+**Token Refill Logic**:
+1. On each `acquire()` call, compute elapsed time since `lastRefillTimestamp`.
+2. Calculate tokens to add: `elapsed / 1000 * refillRate`.
+3. Set `availableTokens = Math.min(availableTokens + tokensToAdd, maxTokens)`.
+4. Update `lastRefillTimestamp` to current time.
+5. If `availableTokens >= tokens`, deduct and return immediately.
+6. Otherwise, compute wait time, sleep, then refill and deduct.
+
+**Design Decisions**:
+- This is a utility class with no error codes. Callers that exceed rate limits are delayed transparently rather than rejected, which simplifies error handling in bulk orchestration flows.
+- The token bucket algorithm was chosen over fixed-window or sliding-window because it allows controlled bursts (up to `maxTokens`) while enforcing a sustained rate limit, which matches the NSX Manager API's behavior of accepting bursts but rate-limiting sustained traffic.
 
 ### 1.2 Tag Operations Module (`src/vro/actions/tags/`)
 
@@ -373,6 +435,17 @@ class DfwError extends Error {
 - `verifyMembership(vmId, site): Promise<{ groups: string[], membershipCount: number }>` -- Queries NSX group membership APIs to determine which groups the VM currently belongs to.
 - `predictGroupChanges(currentTags, newTags): Promise<{ groupsToJoin: string[], groupsToLeave: string[], unchangedGroups: string[] }>` -- Analyzes the tag changes to predict which groups the VM will join or leave. Used by Day2Orchestrator for impact analysis before applying changes.
 - `checkDependencies(vmId, site): Promise<{ hasDependencies: boolean, dependencies: Array<{ group, dependentVMs }> }>` -- Safety check for Day N decommission. Determines if removing this VM would leave any group empty when that group is referenced by active DFW rules, which could disrupt other VMs' security posture.
+
+**Security Group Rules** (tag-to-group membership criteria):
+
+| Security Group | Membership Criteria | Description |
+|---------------|---------------------|-------------|
+| SG-{App}_{Tier}_{Env} | Application={App} AND Tier={Tier} AND Environment={Env} | Standard application-tier-environment group |
+| SG-Env_{Env} | Environment={Env} | Environment-wide group |
+| SG-Compliance_{Type} | Compliance includes {Type} | Compliance-scoped group |
+| SG-Quarantine | Quarantine=ACTIVE | Quarantine isolation group. VMs tagged with `Quarantine=ACTIVE` are automatically placed into this group, which is referenced by the DFW quarantine policy to restrict all non-management traffic. |
+
+The `SG-Quarantine` group is evaluated by the same tag-criteria matching logic as all other groups. When the `Quarantine=ACTIVE` tag is applied, the VM is added to `SG-Quarantine` through NSX dynamic group membership. When the tag is removed (quarantine lifted), the VM is automatically removed from the group, restoring its normal DFW policy coverage.
 
 #### 1.3.2 GroupReconciler
 
@@ -462,7 +535,12 @@ Returns the appropriate subclass instance based on the request type string:
 
 **Extends**: `LifecycleOrchestrator`
 
-**prepare()**: Extracts and normalizes VM specification (cpu defaults to 2, memory to 8GB, disk to 50GB, network to 'dvs-default'). Verifies vCenter connectivity.
+**prepare()**: Extracts and normalizes VM specification (cpu defaults to 2, memory to 8GB, disk to 50GB, network to 'dvs-default'). Verifies vCenter connectivity. Calls `checkExistingVM()` to detect rebuild scenarios.
+
+**New Method: `checkExistingVM(payload, endpoints): Promise<{ exists: boolean, existingVmId?: string, hasActiveCI?: boolean }>`**:
+Detects VM rebuild and same-name reuse scenarios before provisioning. Queries vCenter by `vmName` to check if a VM with the same name already exists. If found, queries ServiceNow CMDB to determine if the existing VM has an active Configuration Item (CI). If both conditions are true (VM exists AND has an active CI), throws `DFW-6210` to prevent accidental overwrite of a live VM. If the VM exists but the CI is decommissioned or absent, logs a warning and allows provisioning to proceed as a rebuild scenario.
+
+**Error Code**: `DFW-6210` -- Duplicate VM name with active CI. Category: INFRASTRUCTURE, HTTP 409 (Conflict), non-retryable. Indicates that the requested VM name is already in use by a VM with an active CMDB record. The operator must either decommission the existing VM first or choose a different name.
 
 **execute()**: 4 timed steps with saga registration:
 1. **provisionVM**: POST to vCenter `/api/vcenter/vm` with hardware specification. Saga compensation: DELETE the provisioned VM.
@@ -511,7 +589,67 @@ Returns the appropriate subclass instance based on the request type string:
 8. **deprovisionVM**: Power off (POST `{action: 'stop'}`) then DELETE via vCenter API.
 9. **updateCMDB**: PATCH ServiceNow CMDB CI to `status: 'decommissioned'`. Does NOT throw on failure -- logs error and returns `{ updated: false }` because the VM has already been deleted.
 
-#### 1.5.5 SagaCoordinator
+#### 1.5.5 QuarantineOrchestrator
+
+**Extends**: `LifecycleOrchestrator`
+
+**Responsibility**: Orchestrates VM quarantine operations by applying the `Quarantine=ACTIVE` tag, verifying placement into the `SG-Quarantine` security group, and confirming enforcement of the DFW quarantine policy that restricts all non-management network traffic.
+
+**Constructor Dependencies** (inherited from LifecycleOrchestrator):
+- `configLoader`, `restClient`, `logger`, `payloadValidator`, `sagaCoordinator`, `deadLetterQueue`, `tagOperations`, `groupVerifier`, `dfwValidator`, `snowAdapter`
+
+**prepare()**: Validates the quarantine payload, ensuring `vmId` (or `vmName`) and `site` are present. Resolves the target VM identity. Verifies that the VM is not already quarantined by checking for an existing `Quarantine=ACTIVE` tag. If already quarantined, returns early with `{ alreadyQuarantined: true }` without re-applying.
+
+**execute()**: 2 timed steps with saga registration:
+1. **applyQuarantineTag**: Applies `Quarantine=ACTIVE` tag via `TagOperations.applyTags(vmId, { Quarantine: 'ACTIVE' }, site)`. Saga compensation: remove the Quarantine tag via `TagOperations.removeTags(vmId, ['Quarantine'], site)`.
+2. **waitForPropagation**: Polls NSX realized-state API until the quarantine tag has propagated to the data plane. Config: maxAttempts=30, intervalMs=10000, timeoutMs=300000.
+
+**verify()**: 2 timed steps:
+3. **verifyQuarantineGroup**: Calls `GroupMembershipVerifier.verifyMembership(vmId, site)` and asserts that `SG-Quarantine` appears in the group list. Throws DFW-8200 if the VM is not a member of the quarantine group after tag propagation.
+4. **verifyQuarantinePolicy**: Calls `DFWPolicyValidator.validatePolicies(vmId, site)` and confirms that the DFW quarantine policy (blocking all non-management traffic) is realized and enforced for the VM.
+
+**Static Method: `createExpiryPayload(quarantineResult): object`**: Builds a scheduled payload for automatic quarantine expiry. Returns a payload object containing the `vmId`, `site`, `scheduledAction: 'remove_quarantine'`, and `expiryTimestamp` (default: 72 hours from quarantine time). This payload is consumed by the scheduling subsystem to automatically lift the quarantine if no manual intervention occurs within the expiry window. Throws DFW-8201 if the quarantine result is malformed or missing required fields for expiry scheduling.
+
+**Error Codes**:
+- `DFW-8200` -- Quarantine failure. Category: PARTIAL_SUCCESS, HTTP 207, retryable. Indicates that the quarantine tag was applied but group membership or DFW policy verification failed.
+- `DFW-8201` -- Expiry scheduling failure. Category: PARTIAL_SUCCESS, HTTP 207, non-retryable. Indicates that quarantine succeeded but the automatic expiry payload could not be constructed. Manual expiry management is required.
+
+#### 1.5.6 BulkTagOrchestrator
+
+**Responsibility**: Orchestrates bulk tag operations across multiple VMs with batching, concurrency control, progress reporting, and per-VM error isolation. Designed for large-scale tag remediation, compliance tagging campaigns, and batch onboarding scenarios.
+
+**Constructor Parameters**:
+- `tagOperations: TagOperations` -- Tag CRUD operations.
+- `groupVerifier: GroupMembershipVerifier` -- Group membership verification.
+- `dfwValidator: DFWPolicyValidator` -- DFW policy validation.
+- `sagaCoordinator: SagaCoordinator` -- Distributed transaction management.
+- `logger: Logger` -- Structured JSON logger.
+- `restClient: RestClient` -- HTTP client with resilience patterns.
+- `configLoader: ConfigLoader` -- Site endpoint resolution.
+- `snowAdapter: SnowPayloadAdapter` -- ServiceNow integration.
+
+**Key Methods**:
+- `async executeBulk(payload): Promise<{ totalVMs, succeeded, failed, skipped, results, dryRun }>` -- Processes a batch of VM tag operations. The payload contains an array of VM entries, each with `vmId`, `site`, and `tags`. Operations are batched and executed with concurrency control via a Semaphore.
+
+**Bulk Execution Flow**:
+1. Validate the bulk payload (array of VM entries, each with required fields).
+2. If `payload.dryRun === true`, simulate all operations without mutations and return projected results.
+3. Initialize the Semaphore with the configured concurrency limit (default: 5 concurrent operations).
+4. For each VM entry, acquire a semaphore slot and execute the tag operation.
+5. On per-VM failure, record the error in the results array but continue processing remaining VMs (error isolation).
+6. If `payload.onProgress` callback is provided, invoke it after each VM completes with `{ completed, total, currentVM, status }`.
+7. Return aggregate results with per-VM status detail.
+
+**Dry-Run Mode**: When `payload.dryRun === true`, the orchestrator performs all validation and impact analysis steps but skips the actual tag PATCH calls. Each VM entry in the results includes `{ vmId, projectedDelta, projectedGroupChanges, riskLevel }` without making any mutations. This mode is used for pre-flight validation of bulk operations.
+
+**Concurrency Control**: Uses a counting Semaphore initialized with `maxConcurrency` (configurable, default 5). Each VM operation acquires one permit before execution and releases it upon completion (success or failure). This prevents overwhelming NSX Manager with parallel PATCH requests during large batch runs.
+
+**Error Isolation**: Individual VM failures do not abort the bulk operation. Each failed VM is recorded with its error details in the results array, and processing continues with the remaining VMs. The final result includes counts of `succeeded`, `failed`, and `skipped` VMs, along with per-VM error details for failed entries.
+
+**Error Code**:
+- `DFW-8300` -- Bulk processing failure. Category: PARTIAL_SUCCESS, HTTP 207, retryable. Indicates that the bulk operation completed but one or more individual VM operations failed. The response includes per-VM status details.
+
+#### 1.5.8 SagaCoordinator
 
 **Responsibility**: Distributed transaction management with compensating actions executed in LIFO (reverse) order on failure.
 
@@ -524,7 +662,7 @@ Returns the appropriate subclass instance based on the request type string:
 - `getJournal(): Array` -- Returns a shallow copy of the step journal.
 - `isActive(): boolean` -- Returns whether a saga is currently in progress.
 
-#### 1.5.6 DeadLetterQueue
+#### 1.5.9 DeadLetterQueue
 
 **Responsibility**: Persistent storage for failed operations. Each DLQ entry contains the full operation context needed for manual investigation and reprocessing.
 

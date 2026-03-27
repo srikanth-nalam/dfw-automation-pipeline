@@ -46,6 +46,21 @@ flowchart LR
     D -->|Callback| A
 ```
 
+## Key Features
+
+- **Tag-Driven Micro-Segmentation** — Day 0 / Day 2 / Day N lifecycle management via NSX tags
+- **Emergency Quarantine** — Break-glass VM isolation with auto-expiry for security incidents
+- **Bulk Tag Operations** — Batch tag remediation with configurable concurrency and dry-run mode
+- **Drift Detection** — Scheduled tag drift scanning with automatic remediation
+- **Legacy VM Onboarding** — CSV-based bulk onboarding of VMs deployed outside the standard pipeline
+- **Migration Verification** — Post-vMotion tag and group membership verification
+- **Untagged VM Discovery** — vCenter scanning to identify VMs without required NSX tags
+- **Impact Analysis** — Pre-approval read-only assessment of tag change effects on groups and DFW policies
+- **Rate Limiting** — Token bucket rate limiter protecting downstream APIs from burst traffic
+- **Saga-Based Rollback** — Distributed transaction coordination with compensating actions
+- **Circuit Breaker & Retry** — Resilience patterns protecting NSX, vCenter, and ServiceNow integrations
+- **Policy-as-Code** — DFW rules, security groups, and tag dictionaries stored as version-controlled YAML
+
 ## Quick Start
 
 ```bash
@@ -83,21 +98,32 @@ dfw-automation-pipeline/
 │   │   │   │   ├── CorrelationContext.js    # Request correlation ID propagation
 │   │   │   │   ├── ErrorFactory.js         # Structured DFW error code factory
 │   │   │   │   ├── Logger.js               # Structured JSON logger (Splunk/ELK)
+│   │   │   │   ├── RateLimiter.js          # Token bucket rate limiter for NSX API
 │   │   │   │   └── RetryHandler.js         # Exponential backoff retry with strategies
 │   │   │   ├── tags/            # NSX tag management
 │   │   │   │   ├── TagOperations.js        # Idempotent read-compare-write tag CRUD
-│   │   │   │   └── TagCardinalityEnforcer.js # Cardinality rules and conflict detection
+│   │   │   │   ├── TagCardinalityEnforcer.js # Cardinality rules and conflict detection
+│   │   │   │   └── UntaggedVMScanner.js    # vCenter inventory scan for untagged VMs
 │   │   │   ├── groups/          # NSX security group management
 │   │   │   ├── dfw/             # DFW policy and rule management
 │   │   │   │   ├── DFWPolicyValidator.js   # Realized-state coverage validation
 │   │   │   │   └── RuleConflictDetector.js # Shadow, contradiction, duplicate detection
 │   │   │   └── lifecycle/       # Orchestration and saga coordination
-│   │   │       └── SagaCoordinator.js      # Distributed transaction rollback
+│   │   │       ├── SagaCoordinator.js      # Distributed transaction rollback
+│   │   │       ├── BulkTagOrchestrator.js  # Bulk tag ops with batching and concurrency
+│   │   │       ├── DriftDetectionWorkflow.js # Scheduled drift scan and remediation
+│   │   │       ├── ImpactAnalysisAction.js # Pre-approval read-only impact analysis
+│   │   │       ├── LegacyOnboardingOrchestrator.js # CSV-based legacy VM onboarding
+│   │   │       ├── MigrationVerifier.js    # Post-vMotion tag preservation check
+│   │   │       └── QuarantineOrchestrator.js # Emergency VM quarantine with auto-expiry
 │   │   └── workflows/           # vRO workflow definitions
 │   ├── servicenow/
 │   │   └── catalog/
 │   │       └── client-scripts/  # ServiceNow catalog form scripts
-│   │           └── vmBuildRequest_onLoad.js # Form initialization and defaults
+│   │           ├── vmBuildRequest_onLoad.js      # VM build form initialization
+│   │           ├── tagUpdateRequest_onLoad.js    # Tag update form initialization
+│   │           ├── quarantineRequest_onLoad.js   # Emergency quarantine form
+│   │           └── bulkTagRequest_onLoad.js      # Bulk tag remediation form
 │   └── adapters/                # External system adapters
 ├── tests/
 │   ├── unit/                    # Unit tests (Jest)
@@ -144,10 +170,10 @@ For detailed deployment instructions, prerequisites, test data setup, and demo w
 
 The Developer Guide covers:
 - Complete prerequisites checklist with exact versions and permissions
-- Step-by-step deployment for all 22 vRO actions, 3 workflows, and 10 ServiceNow components
+- Step-by-step deployment for all 30 vRO actions, 3 workflows, and 12 ServiceNow components
 - NSX tag category, security group, and DFW policy configuration
 - Test data setup with 26 tag dictionary entries and bulk-load scripts
-- Five end-to-end demo scenarios (Day 0, Day 2, Day N, Emergency Quarantine, Drift Detection)
+- Eight end-to-end demo scenarios (Day 0, Day 2, Day N, Emergency Quarantine, Drift Detection, Bulk Onboarding, Migration Verification, Untagged VM Discovery)
 - Troubleshooting guide for common setup issues
 
 ## Design Patterns
@@ -163,6 +189,8 @@ This pipeline implements several design patterns to ensure reliability, maintain
 | **Saga** | `SagaCoordinator` | Manages distributed transactions with compensating actions for multi-step rollback on failure |
 | **Circuit Breaker** | `CircuitBreaker` | Protects downstream APIs (NSX, vCenter) from cascading failures with CLOSED/OPEN/HALF_OPEN states |
 | **Idempotent Read-Compare-Write** | `TagOperations` | Reads current state, computes delta, writes only changes to prevent race conditions and unnecessary writes |
+| **Token Bucket** | `RateLimiter` | Protects NSX API from overload during bulk operations with configurable burst and refill rates |
+| **Semaphore** | `BulkTagOrchestrator` | Controls concurrency during parallel bulk tag operations to prevent resource exhaustion |
 | **Repository** | Policy YAML files | Stores DFW rules, security groups, and tag dictionaries as version-controlled code (policy-as-code) |
 
 ## Running Tests

@@ -19,6 +19,7 @@
 6. [Multi-Site Considerations](#6-multi-site-considerations)
 7. [Error Handling Strategy](#7-error-handling-strategy)
 8. [Tag Governance Model](#8-tag-governance-model)
+9. [Module Inventory](#9-module-inventory)
 
 ---
 
@@ -61,6 +62,34 @@ The tradeoff is that operators must interact with policies through text files an
 The pipeline operates on an eventual consistency model: after a tag is applied to a VM, there is a propagation delay before NSX security groups update their membership and DFW rules take effect on the data plane. The pipeline addresses this with polling-based verification (checking realized state until convergence) rather than assuming instantaneous consistency.
 
 This design accepts higher latency in exchange for reliability. The alternative -- relying on synchronous API responses as confirmation of enforcement -- would be fragile because the NSX data plane updates asynchronously from the management plane.
+
+### 2.5 Saga Pattern Extended for Quarantine Rollback
+
+The quarantine workflow extends the existing saga pattern to handle emergency VM isolation scenarios where rollback correctness is safety-critical. When a VM is quarantined, the QuarantineOrchestrator records each isolation step (tag application, group membership change, DFW rule enforcement) as a compensable saga entry. If quarantine fails partway through -- or when the quarantine expires -- the saga coordinator executes the inverse operations in strict reverse order: DFW rules are relaxed before group memberships are restored, and group memberships are restored before quarantine tags are removed.
+
+The tradeoff is that quarantine rollback is more conservative than standard saga compensation. Standard compensations use best-effort semantics (continue on failure), but quarantine rollback uses fail-stop semantics: if any compensation step fails, the rollback halts and the VM remains in its current isolation state rather than risk leaving a partially de-isolated VM. This prioritizes security over availability -- a VM that stays quarantined longer than necessary is preferable to a VM that is accidentally exposed during a partial rollback.
+
+### 2.6 Semaphore-Based Concurrency Control for Bulk Operations
+
+Bulk tag operations (applying or modifying tags across tens or hundreds of VMs) require concurrency control to avoid overwhelming NSX Manager with simultaneous API calls. The BulkTagOrchestrator uses a counting semaphore to limit the number of concurrent tag operations to a configurable maximum (default: 5). Each VM operation acquires a semaphore permit before executing and releases it upon completion, regardless of success or failure.
+
+This approach was chosen over a simple serial loop because bulk operations on large VM sets would take unacceptably long if processed one at a time. It was chosen over unthrottled parallelism because NSX Manager has internal concurrency limits that, when exceeded, produce HTTP 429 responses or degraded performance. The semaphore provides a middle ground: predictable throughput without overloading the target system. The concurrency limit is tunable per deployment, allowing operators to increase throughput during maintenance windows or decrease it during peak business hours.
+
+### 2.7 Read-Compare-Write Pattern for Idempotent Tag Operations
+
+Tag operations across the pipeline use a read-compare-write pattern to ensure idempotency and prevent race conditions. Before applying any tag change, the operation reads the VM's current tag set from NSX, computes a minimal diff against the desired state, and writes only the changes. If the desired state already matches the current state, no write is issued.
+
+This pattern is critical for bulk operations and retry scenarios. When the RetryHandler re-executes a failed tag operation, the read-compare-write ensures that tags successfully applied before the failure are not re-applied or duplicated. It also prevents conflicting concurrent operations from silently overwriting each other's changes -- if the current state has diverged from expectations (due to a concurrent modification), the operation can detect the conflict and either merge or abort.
+
+The tradeoff is an additional API read before every write, which increases per-operation latency by one round trip. This is acceptable because the read cost is small relative to the write cost, and the correctness guarantees are essential for maintaining tag consistency across distributed operations.
+
+### 2.8 Token Bucket Rate Limiting for NSX API Protection
+
+The pipeline employs a token bucket rate limiter to protect NSX Manager from excessive API call volume during bulk operations, drift scans, and other high-throughput workflows. The RateLimiter maintains a bucket of tokens that refill at a fixed rate (configurable, default: 20 tokens per second). Each API call consumes one token. When the bucket is empty, callers block until a token becomes available.
+
+This approach was chosen over a simple fixed-window rate limiter because the token bucket algorithm handles burst traffic more gracefully. A fixed-window limiter allows all permitted calls at the start of the window, creating a thundering-herd pattern. The token bucket smooths request distribution over time while still permitting short bursts up to the bucket capacity.
+
+The tradeoff is that callers may experience variable latency when the token bucket is depleted, which complicates timeout calculations. The pipeline addresses this by excluding rate-limiter wait time from the operation timeout budget -- the timeout clock starts when the API call is actually dispatched, not when it is submitted to the rate limiter.
 
 ---
 
@@ -307,6 +336,23 @@ Tags follow the VM lifecycle:
 - **Day N**: All tags are removed during decommissioning. The pipeline verifies that the VM has been removed from all security groups before reporting completion.
 
 Tag changes are always correlated with a ServiceNow RITM, providing full traceability from the business request through to the NSX tag operation.
+
+---
+
+## 9. Module Inventory
+
+The following table lists the pipeline modules, their responsibilities, and key design characteristics.
+
+| Module | Responsibility | Pattern(s) | Error Handling |
+|--------|---------------|------------|----------------|
+| ImpactAnalysisAction | Pre-approval read-only impact analysis for proposed tag changes. Evaluates what security groups, DFW rules, and compliance postures would be affected by a tag change without applying any modifications. Returns a structured impact report for review before execution. | Read-only query; no side effects | Returns validation errors for unresolvable VMs or invalid tag combinations; does not trigger saga compensation since no mutations occur |
+| QuarantineOrchestrator | Emergency VM quarantine with auto-expiry and DFW isolation. Applies quarantine tags, forces membership in a dedicated quarantine security group, and enforces deny-all DFW rules. Supports configurable auto-expiry timers that trigger automatic de-quarantine via saga rollback. | Saga (extended with fail-stop rollback), Template Method | Fail-stop compensation: if any rollback step fails, the VM remains quarantined and an operator alert is raised. Quarantine application failures trigger immediate saga compensation to prevent partial isolation. |
+| BulkTagOrchestrator | Bulk tag operations with batching, concurrency control, and per-VM error isolation. Processes large VM sets in configurable batch sizes with semaphore-controlled parallelism. Individual VM failures are isolated and do not abort the overall batch. | Semaphore-based concurrency, Per-item error isolation, Read-compare-write | Per-VM error isolation: failures on individual VMs are recorded and reported but do not halt the batch. A summary report lists succeeded, failed, and skipped VMs. Failed VMs can be retried independently. |
+| DriftDetectionWorkflow | Scheduled tag drift scanning with optional auto-remediation. Compares current NSX tag state against the declared desired state (from policy YAML or ServiceNow CMDB) and reports discrepancies. When auto-remediation is enabled, applies corrective tag operations using the standard read-compare-write pattern. | Repository (policy-as-code), Read-compare-write, Scheduled execution | Drift reports are generated regardless of remediation outcome. Remediation failures are logged per VM and do not block reporting. Auto-remediation respects circuit breaker state -- if NSX Manager is unhealthy, remediation is deferred. |
+| LegacyOnboardingOrchestrator | CSV-based legacy and brownfield VM onboarding with dictionary validation. Ingests CSV files containing VM identifiers and desired tag assignments, validates every entry against the tag dictionary and cardinality rules, and orchestrates tag application for valid entries. Invalid entries are rejected with per-row error details. | Factory (error generation), Adapter (CSV parsing), Saga | Row-level validation errors are collected and returned in a structured report. Valid rows are processed independently; invalid rows do not block valid ones. Tag application uses saga compensation for rollback on failure. |
+| MigrationVerifier | Post-vMotion tag preservation verification and re-application. After a VM migrates between clusters or sites, verifies that all NSX tags survived the migration. If tags were lost (a known issue with certain vMotion scenarios), re-applies them from the last known desired state. | Read-compare-write, Adapter (vCenter event listener) | Verification failures trigger automatic re-application using the idempotent read-compare-write pattern. If re-application fails after retries, the VM is flagged for manual intervention and an alert is raised. |
+| UntaggedVMScanner | vCenter inventory scan for untagged VMs with classification suggestions. Queries vCenter for all VMs, identifies those lacking required NSX tags, and generates classification suggestions based on VM metadata (name conventions, cluster placement, resource pool membership, folder hierarchy). | Adapter (vCenter), Repository (tag dictionary) | Scanner errors (e.g., vCenter API failures) are handled by circuit breaker. Partial scan results are reported with a warning indicating incomplete coverage. Classification suggestions are advisory only and require operator approval before application. |
+| RateLimiter | Token bucket rate limiter for NSX API protection during bulk operations. Maintains a configurable token bucket that controls the rate of outbound NSX API calls. Callers acquire a token before each API call; when tokens are exhausted, callers block until the bucket refills. Supports configurable bucket capacity and refill rate. | Token bucket algorithm | Timeout on token acquisition raises a DFW-7xxx timeout error. The rate limiter itself does not retry -- it delegates retry decisions to the calling module's RetryHandler. Bucket state is monitored and exposed via metrics for capacity planning. |
 
 ---
 

@@ -15,9 +15,10 @@
 2. [Component Inventory](#2-component-inventory)
 3. [Interface Definitions](#3-interface-definitions)
 4. [Data Flow](#4-data-flow)
-5. [Deployment Topology](#5-deployment-topology)
-6. [DR/HA Considerations](#6-drha-considerations)
-7. [Monitoring and Observability](#7-monitoring-and-observability)
+5. [Brownfield / Existing VM Flows](#brownfield--existing-vm-flows)
+6. [Deployment Topology](#5-deployment-topology)
+7. [DR/HA Considerations](#6-drha-considerations)
+8. [Monitoring and Observability](#7-monitoring-and-observability)
 
 ---
 
@@ -179,6 +180,10 @@ The architecture is guided by several foundational principles:
 | `DFWPolicyValidator` | `src/vro/actions/dfw/` | Validates realized-state DFW coverage for VMs by querying the NSX enforcement point API | Validation |
 | `RuleConflictDetector` | `src/vro/actions/dfw/` | Detects shadow rules (more specific rule masks a broader one), contradicting rules (allow/deny for same traffic), and duplicate rules | Analysis |
 | `PolicyDeployer` | `src/vro/actions/dfw/` | Deploys DFW policies from YAML templates to NSX Manager via the Policy API | Deployment |
+| `ImpactAnalysisAction` | `src/vro/actions/dfw/` | Evaluates downstream effects of proposed tag or group changes on DFW rule coverage, identifying VMs that would gain or lose policy protection before changes are committed | Pre-flight Analysis |
+| `DriftDetectionWorkflow` | `src/vro/actions/tags/` | Scheduled comparison of CMDB-declared tag state against actual NSX tag state, producing a delta report and optionally auto-remediating discovered drift or opening a ServiceNow incident | Reconciliation |
+| `UntaggedVMScanner` | `src/vro/actions/tags/` | Discovers VMs in the NSX fabric inventory that have no tags or are missing mandatory tag categories, generating compliance reports and optionally queueing remediation requests | Discovery |
+| `RateLimiter` | `src/vro/actions/shared/` | Enforces per-endpoint request rate limits using a sliding-window token bucket algorithm, preventing NSX API throttling during bulk operations by queuing excess requests | Rate Limiting |
 
 ### 2.4 vRO Components -- Lifecycle Orchestrators
 
@@ -190,6 +195,10 @@ The architecture is guided by several foundational principles:
 | `DayNOrchestrator` | `src/vro/actions/lifecycle/` | Day N decommission: dependency check, orphaned rule detection, tag removal, group removal verification, VM deprovisioning, CMDB update | Concrete Template |
 | `SagaCoordinator` | `src/vro/actions/lifecycle/` | Distributed transaction management: records completed steps with compensating actions, executes LIFO rollback on failure | Saga |
 | `DeadLetterQueue` | `src/vro/actions/lifecycle/` | Persistent storage for failed operations with full context (correlation ID, payload, error, partial steps, compensation results) | Dead Letter Queue |
+| `QuarantineOrchestrator` | `src/vro/actions/lifecycle/` | Emergency quarantine workflow that applies a Quarantine=ACTIVE tag to a VM, forces membership in the SG-Quarantine security group, verifies that the DFW quarantine deny-all policy is active, and schedules auto-expiry for time-limited quarantines | Concrete Template |
+| `BulkTagOrchestrator` | `src/vro/actions/lifecycle/` | Processes batched tag operations from CSV uploads, validating each row against the Tag Dictionary, applying changes in configurable batch sizes with progress callbacks to ServiceNow, and producing a completion report summarizing successes and failures | Batch Orchestrator |
+| `LegacyOnboardingOrchestrator` | `src/vro/actions/lifecycle/` | Onboards existing brownfield VMs into the tag-driven security model by discovering current firewall rules, mapping them to equivalent tag-based policies, applying tags, and verifying that the effective security posture is unchanged after migration | Migration Orchestrator |
+| `MigrationVerifier` | `src/vro/actions/lifecycle/` | Post-vMotion verification workflow that checks whether NSX tags survived a VM migration to a new host or cluster, re-applies any missing tags at the destination, and confirms security group membership and DFW policy coverage are intact | Verification |
 
 ### 2.5 Integration Adapters
 
@@ -463,6 +472,51 @@ sequenceDiagram
     VRO->>SNOW: PATCH /cmdb_ci (status: decommissioned)
     VRO->>SNOW: POST /dfw_callback {status: 'SUCCESS', summary: 'decommissioned'}
 ```
+
+---
+
+## Brownfield / Existing VM Flows
+
+In addition to the greenfield Day 0/2/N lifecycle operations, the pipeline supports several workflows for managing existing (brownfield) VMs that were provisioned outside the automated pipeline or that require operational interventions beyond standard lifecycle management.
+
+### Emergency Quarantine Flow
+
+The Emergency Quarantine Flow provides rapid network isolation for compromised or suspicious VMs. When a security incident is raised in ServiceNow, the `QuarantineOrchestrator` applies a `Quarantine=ACTIVE` tag to the target VM, which triggers dynamic membership in the `SG-Quarantine` security group. The DFW quarantine policy -- a pre-provisioned deny-all rule scoped to `SG-Quarantine` -- immediately blocks all inbound and outbound traffic for the VM. The orchestrator verifies that the quarantine policy is actively enforced on the data plane before sending a callback to ServiceNow. Time-limited quarantines include an auto-expiry mechanism that removes the quarantine tag after a configurable duration, restoring the VM to its previous security posture.
+
+**Flow**: VM quarantine request received -> Quarantine tag applied (`Quarantine=ACTIVE`) -> Dynamic membership in `SG-Quarantine` group -> DFW deny-all quarantine policy blocks traffic -> Auto-expiry removes quarantine tag after configured duration
+
+```mermaid
+sequenceDiagram
+    participant SNOW as ServiceNow
+    participant QO as QuarantineOrchestrator
+    participant NSX as NSX Manager
+    participant DFW as DFW Policy
+    SNOW->>QO: Quarantine request
+    QO->>NSX: Read current tags
+    QO->>NSX: Apply Quarantine=ACTIVE tag
+    NSX->>NSX: Tag propagation
+    QO->>NSX: Verify SG-Quarantine membership
+    QO->>DFW: Verify quarantine policy active
+    QO->>SNOW: Callback with result
+```
+
+### Bulk Tag Remediation Flow
+
+The Bulk Tag Remediation Flow enables operators to apply tag changes to large numbers of VMs in a single operation. A CSV file containing VM identifiers and desired tag assignments is uploaded through ServiceNow or an administrative interface. The `BulkTagOrchestrator` validates each row against the Tag Dictionary, groups valid entries into configurable batches, and processes each batch sequentially through the standard tag application pipeline. The `RateLimiter` throttles NSX API calls to prevent platform overload during large-scale operations. Progress callbacks are sent to ServiceNow at configurable intervals, and a completion report summarizing successes, failures, and skipped entries is generated at the end.
+
+**Flow**: CSV upload with VM-to-tag mappings -> Row-level validation against Tag Dictionary -> Batched processing with configurable batch size -> Rate-limited NSX API calls -> Progress callbacks to ServiceNow -> Completion report with per-VM status
+
+### Drift Detection Flow
+
+The Drift Detection Flow runs on a scheduled cadence (configurable, default every 4 hours) to identify discrepancies between the CMDB-declared tag state and the actual NSX tag state. The `DriftDetectionWorkflow` queries the CMDB for the expected tag assignments for each managed VM and compares them against the tags currently applied in NSX Manager. Discovered drift is classified by severity: missing tags (high), extra tags (medium), and value mismatches (high). Based on the drift policy configuration, the workflow either auto-remediates by re-applying the expected tags, or creates a ServiceNow incident for manual review. All drift events are logged with full before/after state for audit purposes.
+
+**Flow**: Scheduled scan triggered by cron -> Query CMDB for expected tag state -> Query NSX Manager for actual tag state -> Compare and compute drift delta -> Auto-remediate (re-apply expected tags) or create ServiceNow incident -> Log drift event with before/after state
+
+### Migration Verification Flow
+
+The Migration Verification Flow ensures that VM security posture is preserved after vMotion events. When a VM is migrated to a new host or cluster (either manually or by DRS), NSX tags may not propagate correctly to the destination. The `MigrationVerifier` detects post-vMotion events, reads the expected tag state from the CMDB, compares it against the tags present on the VM at the destination, and re-applies any missing tags. After tag restoration, the verifier confirms that the VM has rejoined its expected security groups and that DFW policies are actively enforced on the data plane at the new location.
+
+**Flow**: Post-vMotion event detected -> Read expected tags from CMDB -> Check tags at destination host -> Re-apply missing tags if needed -> Verify security group membership restored -> Verify DFW policy enforcement at new location
 
 ---
 

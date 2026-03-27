@@ -363,4 +363,54 @@ describe('Day0Orchestrator', () => {
     expect(result.compliant).toBe(true);
     expect(result.policyCount).toBe(1);
   });
+
+  // ---------------------------------------------------------------------------
+  // Sub-step: checkExistingVM
+  // ---------------------------------------------------------------------------
+  test('checkExistingVM returns false when no existing VM found', async () => {
+    deps.restClient.get.mockResolvedValue([]);
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.existingVmFound).toBe(false);
+    expect(deps.restClient.get).toHaveBeenCalledWith(
+      expect.stringContaining('/api/vcenter/vm?names=')
+    );
+  });
+
+  test('checkExistingVM allows provisioning when existing VM has retired CI', async () => {
+    deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-123' }]);
+    deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'Retired' });
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.existingVmFound).toBe(true);
+    expect(result.action).toBe('retag');
+    expect(result.oldVmId).toBe('vm-old-123');
+    expect(result.oldCiStatus).toBe('Retired');
+  });
+
+  test('checkExistingVM throws DFW-6210 when existing VM has active CI', async () => {
+    deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-456' }]);
+    deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'Active' });
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    await expect(orchestrator.checkExistingVM(validPayload, endpoints))
+      .rejects.toThrow(/DFW-6210/);
+  });
+
+  test('checkExistingVM proceeds when vCenter check fails', async () => {
+    deps.restClient.get.mockRejectedValue(new Error('vCenter unreachable'));
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.existingVmFound).toBe(false);
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      'Existing VM check failed, proceeding with provisioning',
+      expect.any(Object)
+    );
+  });
 });

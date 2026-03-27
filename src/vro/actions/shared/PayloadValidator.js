@@ -26,7 +26,11 @@ const VALID_REQUEST_TYPES = [
   'day2_tag_update',
   'day_n_decommission',
   'bulk_tag',
-  'legacy_onboard'
+  'legacy_onboard',
+  'quarantine',
+  'impact_analysis',
+  'drift_scan',
+  'migration_verify'
 ];
 
 /**
@@ -37,7 +41,7 @@ const VALID_REQUEST_TYPES = [
 const VALID_SITES = ['NDCNG', 'TULNG'];
 
 /**
- * Required top-level fields in every payload.
+ * Required top-level fields in every payload (base set).
  *
  * @constant {string[]}
  */
@@ -49,6 +53,75 @@ const REQUIRED_FIELDS = [
   'tags',
   'callbackUrl'
 ];
+
+/**
+ * Per-requestType overrides for required fields and tag requirements.
+ *
+ * - `requiredFields`: which top-level fields are mandatory for this type.
+ * - `tagsRequired`: whether the `tags` object is mandatory.
+ * - `allTagFieldsRequired`: whether ALL 5 mandatory tag fields are required
+ *   (when false, at least 1 tag field suffices).
+ * - `vmIdentifier`: `'vmName'`, `'vmId'`, `'either'`, or `'none'` indicating
+ *   which VM identifier field(s) are required.
+ *
+ * @constant {Object.<string, Object>}
+ */
+const REQUEST_TYPE_RULES = Object.freeze({
+  day0_provision: {
+    requiredFields: ['correlationId', 'requestType', 'vmName', 'site', 'tags', 'callbackUrl'],
+    tagsRequired: true,
+    allTagFieldsRequired: true,
+    vmIdentifier: 'vmName'
+  },
+  day2_tag_update: {
+    requiredFields: ['correlationId', 'requestType', 'site', 'tags', 'callbackUrl'],
+    tagsRequired: true,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'either'
+  },
+  day_n_decommission: {
+    requiredFields: ['correlationId', 'requestType', 'site', 'callbackUrl'],
+    tagsRequired: false,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'either'
+  },
+  bulk_tag: {
+    requiredFields: ['correlationId', 'requestType', 'site', 'callbackUrl'],
+    tagsRequired: false,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'none'
+  },
+  legacy_onboard: {
+    requiredFields: ['correlationId', 'requestType', 'site', 'callbackUrl'],
+    tagsRequired: false,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'none'
+  },
+  quarantine: {
+    requiredFields: ['correlationId', 'requestType', 'site', 'callbackUrl'],
+    tagsRequired: false,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'either'
+  },
+  impact_analysis: {
+    requiredFields: ['correlationId', 'requestType', 'site', 'tags'],
+    tagsRequired: true,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'either'
+  },
+  drift_scan: {
+    requiredFields: ['correlationId', 'requestType', 'site'],
+    tagsRequired: false,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'none'
+  },
+  migration_verify: {
+    requiredFields: ['correlationId', 'requestType', 'site'],
+    tagsRequired: false,
+    allTagFieldsRequired: false,
+    vmIdentifier: 'either'
+  }
+});
 
 /**
  * Required tag categories.
@@ -232,8 +305,16 @@ class PayloadValidator {
       return { valid: false, errors };
     }
 
+    // Resolve per-requestType rules (falls back to base REQUIRED_FIELDS)
+    const rules = payload.requestType && REQUEST_TYPE_RULES[payload.requestType]
+      ? REQUEST_TYPE_RULES[payload.requestType]
+      : null;
+
     // --- Phase 1: Required field presence ---
-    this._validateRequiredFields(payload, errors);
+    this._validateRequiredFields(payload, errors, rules);
+
+    // --- Phase 1b: VM identifier validation ---
+    this._validateVmIdentifier(payload, errors, rules);
 
     // --- Phase 2: Enum and format validation ---
     this._validateRequestType(payload, errors);
@@ -241,8 +322,13 @@ class PayloadValidator {
     this._validateVmName(payload, errors);
     this._validateCallbackUrl(payload, errors);
 
-    // --- Phase 3: Tag structure ---
-    this._validateTags(payload, errors);
+    // --- Phase 3: Tag structure (conditional on requestType) ---
+    if (!rules || rules.tagsRequired) {
+      this._validateTags(payload, errors, rules);
+    } else if (payload.tags !== undefined && payload.tags !== null) {
+      // Tags are optional but if provided, validate structure
+      this._validateTags(payload, errors, rules);
+    }
 
     // --- Phase 4: Conflicting tag combinations ---
     this._validateConflictingTags(payload, errors);
@@ -267,8 +353,10 @@ class PayloadValidator {
    * @param {Object} payload - Request payload.
    * @param {Array}  errors  - Accumulator.
    */
-  _validateRequiredFields(payload, errors) {
-    for (const field of REQUIRED_FIELDS) {
+  _validateRequiredFields(payload, errors, rules) {
+    const fields = rules ? rules.requiredFields : REQUIRED_FIELDS;
+
+    for (const field of fields) {
       if (payload[field] === undefined || payload[field] === null) {
         errors.push(PayloadValidator._makeError(
           'DFW-4001',
@@ -282,6 +370,44 @@ class PayloadValidator {
           field
         ));
       }
+    }
+  }
+
+  /**
+   * Validates that the payload has a valid VM identifier based on the
+   * requestType rules. Some types require vmName, some accept vmId as an
+   * alternative, and some require neither.
+   *
+   * @private
+   * @param {Object} payload - Request payload.
+   * @param {Array}  errors  - Accumulator.
+   * @param {Object|null} rules - Per-requestType rules.
+   */
+  _validateVmIdentifier(payload, errors, rules) {
+    if (!rules) {
+      return;
+    }
+
+    const identifier = rules.vmIdentifier;
+
+    if (identifier === 'none') {
+      return;
+    }
+
+    const hasVmName = typeof payload.vmName === 'string' && payload.vmName.trim() !== '';
+    const hasVmId = typeof payload.vmId === 'string' && payload.vmId.trim() !== '';
+
+    if (identifier === 'vmName' && !hasVmName) {
+      // Already caught by required fields check if vmName is in requiredFields
+      return;
+    }
+
+    if (identifier === 'either' && !hasVmName && !hasVmId) {
+      errors.push(PayloadValidator._makeError(
+        'DFW-4001',
+        'At least one of "vmName" or "vmId" is required for this request type',
+        'vmName'
+      ));
     }
   }
 
@@ -379,7 +505,7 @@ class PayloadValidator {
    * @param {Object} payload - Request payload.
    * @param {Array}  errors  - Accumulator.
    */
-  _validateTags(payload, errors) {
+  _validateTags(payload, errors, rules) {
     if (payload.tags === undefined || payload.tags === null) {
       // Already flagged by required-fields check
       return;
@@ -395,8 +521,26 @@ class PayloadValidator {
     }
 
     const tags = payload.tags;
+    const requireAllTagFields = !rules || rules.allTagFieldsRequired;
 
-    // Required tag fields
+    // When all tag fields are NOT required, ensure at least 1 tag field is present
+    if (!requireAllTagFields) {
+      const presentTagFields = REQUIRED_TAG_FIELDS.filter(
+        f => tags[f] !== undefined && tags[f] !== null
+      );
+      if (presentTagFields.length === 0 && Object.keys(tags).length === 0) {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4001',
+          'Tags object must contain at least one tag field',
+          'tags'
+        ));
+      }
+      // Validate only the tag fields that ARE present (type checks)
+      this._validatePresentTagFields(tags, errors);
+      return;
+    }
+
+    // Required tag fields (all must be present for day0_provision, legacy_onboard)
     for (const field of REQUIRED_TAG_FIELDS) {
       if (tags[field] === undefined || tags[field] === null) {
         errors.push(PayloadValidator._makeError(
@@ -458,6 +602,54 @@ class PayloadValidator {
           `Tag "CostCenter" must be a string, got ${typeof tags.CostCenter}`,
           'tags.CostCenter'
         ));
+      }
+    }
+  }
+
+  /**
+   * Validates tag fields that are present in the tags object but does not
+   * require all mandatory tag fields to be present. Used for request types
+   * where tags are partially required (e.g. day2_tag_update, impact_analysis).
+   *
+   * @private
+   * @param {Object} tags - The tags object.
+   * @param {Array}  errors - Accumulator.
+   */
+  _validatePresentTagFields(tags, errors) {
+    for (const field of REQUIRED_TAG_FIELDS) {
+      const value = tags[field];
+      if (value === undefined || value === null) {
+        continue;
+      }
+
+      if (field === 'Compliance') {
+        if (!Array.isArray(value)) {
+          errors.push(PayloadValidator._makeError(
+            'DFW-4002',
+            `Tag "Compliance" must be an array of strings, got ${typeof value}`,
+            'tags.Compliance'
+          ));
+        } else if (value.length === 0) {
+          errors.push(PayloadValidator._makeError(
+            'DFW-4001',
+            'Tag "Compliance" array must contain at least one value',
+            'tags.Compliance'
+          ));
+        }
+      } else {
+        if (typeof value !== 'string') {
+          errors.push(PayloadValidator._makeError(
+            'DFW-4002',
+            `Tag "${field}" must be a string, got ${typeof value}`,
+            `tags.${field}`
+          ));
+        } else if (value.trim() === '') {
+          errors.push(PayloadValidator._makeError(
+            'DFW-4001',
+            `Tag "${field}" must not be empty`,
+            `tags.${field}`
+          ));
+        }
       }
     }
   }
@@ -564,5 +756,6 @@ PayloadValidator.REQUIRED_TAG_FIELDS = REQUIRED_TAG_FIELDS;
 PayloadValidator.ALL_TAG_FIELDS = ALL_TAG_FIELDS;
 PayloadValidator.VM_NAME_PATTERN = VM_NAME_PATTERN;
 PayloadValidator.PAYLOAD_SCHEMA = PAYLOAD_SCHEMA;
+PayloadValidator.REQUEST_TYPE_RULES = REQUEST_TYPE_RULES;
 
 module.exports = PayloadValidator;

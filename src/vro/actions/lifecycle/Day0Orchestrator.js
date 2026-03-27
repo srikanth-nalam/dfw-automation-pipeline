@@ -158,6 +158,11 @@ class Day0Orchestrator extends LifecycleOrchestrator {
       component: 'Day0Orchestrator'
     });
 
+    // Step 0: Check for existing VM with same name
+    await this._timedStep('checkExistingVM', () => {
+      return this.checkExistingVM(payload, endpoints);
+    });
+
     // Step 1: Provision VM
     const vmResult = await this._timedStep('provisionVM', () => {
       return this.provisionVM(payload, endpoints);
@@ -525,6 +530,106 @@ class Day0Orchestrator extends LifecycleOrchestrator {
     throw new Error(
       `[DFW-6202] Tag propagation did not complete after ` +
       `${PROPAGATION_POLL_CONFIG.maxAttempts} attempts for VM "${vmId}".`
+    );
+  }
+
+  /**
+   * Checks for an existing VM with the same name in vCenter. If found, queries
+   * the CMDB CI status to determine whether provisioning should proceed.
+   *
+   * - If no existing VM is found, provisioning proceeds normally.
+   * - If an existing VM is found with a retired/decommissioned CI, a reconciliation
+   *   note is logged and provisioning proceeds.
+   * - If an existing VM is found with an active CI, an error is thrown to prevent
+   *   name collisions.
+   *
+   * @param {Object} payload - The request payload.
+   * @param {Object} endpoints - Resolved site endpoints.
+   * @returns {Promise<{existingVmFound: boolean, action?: string, oldVmId?: string, oldCiStatus?: string}>}
+   * @throws {Error} DFW-6210 if a VM with the same name exists and has an active CMDB CI.
+   */
+  async checkExistingVM(payload, endpoints) {
+    this.logger.info('Checking for existing VM with same name', {
+      correlationId: payload.correlationId,
+      vmName: payload.vmName,
+      component: 'Day0Orchestrator'
+    });
+
+    let response;
+    try {
+      response = await this.restClient.get(
+        `${endpoints.vcenterUrl}/api/vcenter/vm?names=${encodeURIComponent(payload.vmName)}`
+      );
+    } catch (err) {
+      this.logger.warn('Existing VM check failed, proceeding with provisioning', {
+        correlationId: payload.correlationId,
+        vmName: payload.vmName,
+        errorMessage: err.message,
+        component: 'Day0Orchestrator'
+      });
+      return { existingVmFound: false };
+    }
+
+    const vms = Array.isArray(response) ? response : (response && response.value ? response.value : []);
+
+    if (vms.length === 0) {
+      this.logger.debug('No existing VM found, safe to provision', {
+        correlationId: payload.correlationId,
+        vmName: payload.vmName,
+        component: 'Day0Orchestrator'
+      });
+      return { existingVmFound: false };
+    }
+
+    const existingVm = vms[0];
+    const oldVmId = existingVm.vm || existingVm.vmId || existingVm.id;
+
+    this.logger.info('Existing VM found, checking CMDB CI status', {
+      correlationId: payload.correlationId,
+      vmName: payload.vmName,
+      oldVmId,
+      component: 'Day0Orchestrator'
+    });
+
+    // Query CMDB for CI status
+    let ciStatus = 'unknown';
+    try {
+      const ciRecord = await this.snowAdapter.toCallbackPayload({
+        action: 'getCIStatus',
+        vmId: oldVmId,
+        vmName: payload.vmName
+      });
+      ciStatus = (ciRecord && ciRecord.ciStatus) || 'unknown';
+    } catch (err) {
+      this.logger.warn('CMDB CI status lookup failed', {
+        correlationId: payload.correlationId,
+        oldVmId,
+        errorMessage: err.message,
+        component: 'Day0Orchestrator'
+      });
+    }
+
+    const retiredStatuses = ['retired', 'decommissioned'];
+
+    if (retiredStatuses.includes(ciStatus.toLowerCase())) {
+      this.logger.info('Existing VM has retired/decommissioned CI, proceeding with provisioning', {
+        correlationId: payload.correlationId,
+        vmName: payload.vmName,
+        oldVmId,
+        oldCiStatus: ciStatus,
+        component: 'Day0Orchestrator'
+      });
+      return {
+        existingVmFound: true,
+        action: 'retag',
+        oldVmId,
+        oldCiStatus: ciStatus
+      };
+    }
+
+    throw new Error(
+      `[DFW-6210] VM name "${payload.vmName}" already exists with active CMDB CI ` +
+      `(status: "${ciStatus}", vmId: "${oldVmId}"). Manual review required.`
     );
   }
 

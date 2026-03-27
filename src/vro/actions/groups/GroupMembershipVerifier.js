@@ -66,6 +66,10 @@ const DEFAULT_GROUP_RULES = Object.freeze([
   {
     groupName: 'SG-Confidential-Data',
     criteria: { DataClassification: 'Confidential' }
+  },
+  {
+    groupName: 'SG-Quarantine',
+    criteria: { Quarantine: 'ACTIVE' }
   }
 ]);
 

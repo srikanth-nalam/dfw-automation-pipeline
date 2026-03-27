@@ -180,6 +180,14 @@ Dependencies must be imported before dependents. Follow this exact sequence:
 | 20 | `src/vro/actions/lifecycle/Day0Orchestrator.js` | `com.enterprise.dfw.lifecycle` | `Day0Orchestrator` |
 | 21 | `src/vro/actions/lifecycle/Day2Orchestrator.js` | `com.enterprise.dfw.lifecycle` | `Day2Orchestrator` |
 | 22 | `src/vro/actions/lifecycle/DayNOrchestrator.js` | `com.enterprise.dfw.lifecycle` | `DayNOrchestrator` |
+| 23 | `src/vro/actions/lifecycle/ImpactAnalysisAction.js` | `com.enterprise.dfw.lifecycle` | `ImpactAnalysisAction` |
+| 24 | `src/vro/actions/lifecycle/QuarantineOrchestrator.js` | `com.enterprise.dfw.lifecycle` | `QuarantineOrchestrator` |
+| 25 | `src/vro/actions/lifecycle/BulkTagOrchestrator.js` | `com.enterprise.dfw.lifecycle` | `BulkTagOrchestrator` |
+| 26 | `src/vro/actions/lifecycle/DriftDetectionWorkflow.js` | `com.enterprise.dfw.lifecycle` | `DriftDetectionWorkflow` |
+| 27 | `src/vro/actions/lifecycle/LegacyOnboardingOrchestrator.js` | `com.enterprise.dfw.lifecycle` | `LegacyOnboardingOrchestrator` |
+| 28 | `src/vro/actions/lifecycle/MigrationVerifier.js` | `com.enterprise.dfw.lifecycle` | `MigrationVerifier` |
+| 29 | `src/vro/actions/tags/UntaggedVMScanner.js` | `com.enterprise.dfw.tags` | `UntaggedVMScanner` |
+| 30 | `src/vro/actions/shared/RateLimiter.js` | `com.enterprise.dfw.shared` | `RateLimiter` |
 
 #### How to Create an Action in vRO UI
 
@@ -229,6 +237,14 @@ ACTIONS=(
   "com.enterprise.dfw.lifecycle:Day0Orchestrator:src/vro/actions/lifecycle/Day0Orchestrator.js"
   "com.enterprise.dfw.lifecycle:Day2Orchestrator:src/vro/actions/lifecycle/Day2Orchestrator.js"
   "com.enterprise.dfw.lifecycle:DayNOrchestrator:src/vro/actions/lifecycle/DayNOrchestrator.js"
+  "com.enterprise.dfw.lifecycle:ImpactAnalysisAction:src/vro/actions/lifecycle/ImpactAnalysisAction.js"
+  "com.enterprise.dfw.lifecycle:QuarantineOrchestrator:src/vro/actions/lifecycle/QuarantineOrchestrator.js"
+  "com.enterprise.dfw.lifecycle:BulkTagOrchestrator:src/vro/actions/lifecycle/BulkTagOrchestrator.js"
+  "com.enterprise.dfw.lifecycle:DriftDetectionWorkflow:src/vro/actions/lifecycle/DriftDetectionWorkflow.js"
+  "com.enterprise.dfw.lifecycle:LegacyOnboardingOrchestrator:src/vro/actions/lifecycle/LegacyOnboardingOrchestrator.js"
+  "com.enterprise.dfw.lifecycle:MigrationVerifier:src/vro/actions/lifecycle/MigrationVerifier.js"
+  "com.enterprise.dfw.tags:UntaggedVMScanner:src/vro/actions/tags/UntaggedVMScanner.js"
+  "com.enterprise.dfw.shared:RateLimiter:src/vro/actions/shared/RateLimiter.js"
 )
 
 for entry in "${ACTIONS[@]}"; do
@@ -448,6 +464,26 @@ For each file in `src/servicenow/`, deploy to the corresponding ServiceNow compo
 - **Navigate to:** Service Catalog > Catalog Definitions > Maintain Items > "VM Security Tag Update Request" > Client Scripts > New
 - **Configuration:**
   - Name: `Tag Update Request — onLoad`
+  - Type: `onLoad`
+  - Script: Paste the file contents
+  - Active: true
+  - Order: 100
+
+**File:** `src/servicenow/catalog/client-scripts/quarantineRequest_onLoad.js`
+- **Navigate to:** Service Catalog > Catalog Definitions > Maintain Items > "Emergency VM Quarantine Request" > Client Scripts > New
+- **Configuration:**
+  - Name: `Quarantine Request — onLoad`
+  - Table: `sc_cat_item` (attached via catalog item)
+  - Type: `onLoad`
+  - Script: Paste the file contents
+  - Active: true
+  - Order: 100
+
+**File:** `src/servicenow/catalog/client-scripts/bulkTagRequest_onLoad.js`
+- **Navigate to:** Service Catalog > Catalog Definitions > Maintain Items > "Bulk Tag Remediation Request" > Client Scripts > New
+- **Configuration:**
+  - Name: `Bulk Tag Request — onLoad`
+  - Table: `sc_cat_item` (attached via catalog item)
   - Type: `onLoad`
   - Script: Paste the file contents
   - Active: true
@@ -937,7 +973,53 @@ Create the following DFW policies from the YAML templates in `policies/dfw-rules
 5. **Default Deny All** (manual) — Application category, priority 9999
    - DROP all remaining traffic, logged with label `DEFAULT-DENY-ALL`
 
-### 3.3 Demo Scenarios — Step-by-Step Walkthrough
+### 3.3 Test Payloads for vRO Workflow Invocation
+
+Use the following JSON payloads when testing vRO workflows via REST API or from the vRO client directly.
+
+#### Quarantine Payload
+
+```json
+{
+  "correlationId": "CID-QUAR-TEST-001",
+  "requestType": "quarantine",
+  "vmId": "vm-1001",
+  "site": "NDCNG",
+  "justification": "Suspected lateral movement from compromised endpoint",
+  "durationMinutes": 60
+}
+```
+
+#### Bulk Tag Payload
+
+```json
+{
+  "correlationId": "CID-BULK-TEST-001",
+  "requestType": "bulk_tag",
+  "site": "NDCNG",
+  "vms": [
+    "NDCNG-LEGACY-WEB-001",
+    "NDCNG-LEGACY-APP-001",
+    "NDCNG-LEGACY-DB-001"
+  ],
+  "batchSize": 10,
+  "dryRun": true
+}
+```
+
+#### Drift Scan Payload
+
+```json
+{
+  "correlationId": "CID-DRIFT-TEST-001",
+  "requestType": "drift_scan",
+  "site": "NDCNG",
+  "scope": "full",
+  "autoRemediate": true
+}
+```
+
+### 3.4 Demo Scenarios — Step-by-Step Walkthrough
 
 These scenarios are designed for live stakeholder demonstrations. Each scenario builds on the test data above.
 
@@ -1051,6 +1133,45 @@ This demo shows how the pipeline detects and corrects unauthorized tag changes.
 6. **Show incident update:** The ServiceNow incident work notes are updated with the remediation action and the incident is auto-resolved.
 
 **Expected duration:** 5-8 minutes.
+
+#### Demo 6: Emergency Quarantine with Auto-Expiry Verification
+
+This demo walks through the full quarantine lifecycle including tag application, traffic blocking, and auto-expiry metadata verification.
+
+**Steps:**
+
+1. Submit a quarantine request for a compromised VM (e.g., `NDCNG-APP001-WEB-P01`) using the Emergency VM Quarantine Request catalog item or the quarantine test payload via the vRO REST API.
+2. **Verify quarantine tag applied:** In NSX Manager, confirm that the `Quarantine=Active` tag is present on the target VM and that it has joined the `Quarantined-VMs` dynamic security group.
+3. **Verify traffic blocked:** Attempt to reach the VM from a non-management host — all traffic should be dropped by the Emergency Quarantine DFW policy. Verify that SSH/RDP from Management Jump Hosts still succeeds.
+4. **Verify auto-expiry metadata:** Inspect the VM's custom attributes or the quarantine tracking record in ServiceNow to confirm the expiry timestamp matches the requested duration (e.g., 60 minutes from submission). After the duration elapses, confirm the `Quarantine=Active` tag is automatically removed and normal DFW policies are restored.
+
+**Expected duration:** 8-10 minutes.
+
+#### Demo 7: Bulk Legacy Onboarding
+
+This demo shows how to onboard a batch of legacy VMs that were deployed outside the standard pipeline.
+
+**Steps:**
+
+1. **Prepare CSV with legacy VMs:** Create a CSV file listing VMs to onboard with columns for VM name, Application, Tier, Environment, Compliance, DataClassification, and Site. Include at least 3 VMs (e.g., `NDCNG-LEGACY-WEB-001`, `NDCNG-LEGACY-APP-001`, `NDCNG-LEGACY-DB-001`).
+2. **Execute dry-run:** Submit the bulk tag payload with `dryRun: true` via the vRO REST API or the Bulk Tag Remediation Request catalog item. The BulkTagOrchestrator processes the CSV and generates a report of intended changes without modifying any tags.
+3. **Review report:** Examine the dry-run report to verify the planned tag assignments, group memberships, and DFW policy coverage for each VM.
+4. **Execute live run:** Re-submit the bulk tag payload with `dryRun: false`. The BulkTagOrchestrator processes VMs in batches (controlled by `batchSize`) with concurrency limits managed by the RateLimiter.
+5. **Verify tags and group memberships:** In NSX Manager, confirm that each onboarded VM has the correct tags applied and appears in the expected dynamic security groups. Verify CMDB CI records are updated in ServiceNow.
+
+**Expected duration:** 10-15 minutes.
+
+#### Demo 8: Drift Detection with Auto-Remediation Verification
+
+This demo verifies the full drift detection lifecycle from scan initiation through auto-remediation.
+
+**Steps:**
+
+1. **Trigger drift scan for a site:** Submit the drift scan payload targeting the NDCNG site with `autoRemediate: true` via the vRO REST API, or trigger the DriftDetectionWorkflow manually from the vRO client. The scan compares the expected tag state (from ServiceNow CMDB and the tag dictionary) against the actual tag state in NSX Manager.
+2. **Review drift report:** Examine the drift report generated by the workflow. The report lists each VM with discrepancies — missing tags, extra tags, and incorrect tag values. Verify that the report includes the VM where drift was simulated (e.g., `NDCNG-APP001-APP-P01` with a missing `Environment=Production` tag).
+3. **Verify auto-remediation applied correct tags:** In NSX Manager, confirm that the DriftDetectionWorkflow has re-applied the missing or corrected tags. Verify the VM has been restored to the expected dynamic security groups. Check the ServiceNow incident created by the drift scanner to confirm it was auto-resolved with remediation details in the work notes.
+
+**Expected duration:** 8-10 minutes.
 
 ---
 
