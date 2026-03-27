@@ -161,12 +161,12 @@ function _showUnauthorizedMessage() {
  * @returns {void}
  */
 function _disableFormFields() {
-    var fields = [
+    const fields = [
         'csv_attachment', 'operation_type', 'target_site',
         'batch_size', 'dry_run', 'justification'
     ];
 
-    for (var i = 0; i < fields.length; i++) {
+    for (let i = 0; i < fields.length; i++) {
         g_form.setReadOnly(fields[i], true);
     }
 }
@@ -214,7 +214,7 @@ function _configureBatchSize() {
  * @returns {void}
  */
 function _displayCSVHelp() {
-    var helpContainer = gel('csv_format_help');
+    const helpContainer = gel('csv_format_help');
     if (helpContainer) {
         helpContainer.innerHTML = '<pre>' + CSV_FORMAT_HELP + '</pre>';
         helpContainer.style.display = 'block';

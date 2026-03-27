@@ -144,12 +144,12 @@ function _showUnauthorizedMessage() {
  * @returns {void}
  */
 function _disableFormSubmission() {
-    var fields = [
+    const fields = [
         'vm_ci', 'justification', 'duration_minutes',
         'severity_level', 'initiated_by'
     ];
 
-    for (var i = 0; i < fields.length; i++) {
+    for (let i = 0; i < fields.length; i++) {
         g_form.setReadOnly(fields[i], true);
     }
 }
@@ -167,7 +167,7 @@ function _disableFormSubmission() {
  * @returns {void}
  */
 function _populateVMContext(ciSysId) {
-    var ga = new GlideAjax('DFWTagLookup');
+    const ga = new GlideAjax('DFWTagLookup');
     ga.addParam('sysparm_name', 'getTagsForCI');
     ga.addParam('sysparm_ci_sys_id', ciSysId);
 
@@ -180,7 +180,7 @@ function _populateVMContext(ciSysId) {
             return;
         }
 
-        var tags;
+        let tags;
         try {
             tags = JSON.parse(answer);
         } catch (e) {
@@ -204,16 +204,16 @@ function _populateVMContext(ciSysId) {
  * @returns {void}
  */
 function _setVMContextFields(tags) {
-    var contextMappings = [
+    const contextMappings = [
         { field: 'current_application', key: 'application' },
         { field: 'current_environment', key: 'environment' },
         { field: 'current_tier', key: 'tier' },
         { field: 'current_compliance', key: 'compliance' }
     ];
 
-    for (var i = 0; i < contextMappings.length; i++) {
-        var mapping = contextMappings[i];
-        var value = tags[mapping.key];
+    for (let i = 0; i < contextMappings.length; i++) {
+        const mapping = contextMappings[i];
+        const value = tags[mapping.key];
 
         if (value !== undefined && value !== null) {
             g_form.setValue(mapping.field, value.toString());
@@ -240,7 +240,7 @@ function _checkProductionWarning(tags) {
             'application owner before proceeding.'
         );
 
-        var banner = gel('production_quarantine_banner');
+        const banner = gel('production_quarantine_banner');
         if (banner) {
             banner.style.display = 'block';
         }
