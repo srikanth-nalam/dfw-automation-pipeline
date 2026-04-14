@@ -453,6 +453,243 @@ class DriftDetectionWorkflow {
       });
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Drift trend tracking
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Stores drift scan results for historical trend comparison.
+   * Uses a ServiceNow custom table or local state to persist scan history.
+   *
+   * @async
+   * @param {Object} scanReport - The drift scan report from runDriftScan.
+   * @returns {Promise<{stored: boolean, scanId: string}>}
+   *
+   * @throws {Error} When the scan report is missing required fields.
+   *
+   * @example
+   * const result = await workflow.storeScanHistory(report);
+   * console.log(result.scanId); // 'SCAN-NDCNG-1700000000'
+   */
+  async storeScanHistory(scanReport) {
+    if (!scanReport || typeof scanReport !== 'object') {
+      throw new Error('[DFW-8301] scanReport is required and must be a non-null object.');
+    }
+    if (!scanReport.site) {
+      throw new Error('[DFW-8301] scanReport.site is required.');
+    }
+
+    const scanId = `SCAN-${scanReport.site}-${Date.now()}`;
+    const record = {
+      scanId,
+      site: scanReport.site,
+      timestamp: scanReport.scanTimestamp || new Date().toISOString(),
+      totalVMsScanned: scanReport.totalVMsScanned || 0,
+      driftedVMCount: scanReport.driftedVMCount || 0,
+      remediatedCount: scanReport.remediatedCount || 0,
+      unresolvedCount: scanReport.unresolvedCount || 0,
+      driftDetails: scanReport.driftDetails || []
+    };
+
+    this.logger.info('Storing drift scan history', {
+      scanId,
+      site: scanReport.site,
+      driftedVMCount: record.driftedVMCount,
+      component: 'DriftDetectionWorkflow'
+    });
+
+    try {
+      if (this.snowAdapter && typeof this.snowAdapter.storeScanRecord === 'function') {
+        await this.snowAdapter.storeScanRecord(record);
+      }
+    } catch (err) {
+      this.logger.warn('Failed to store scan history in ServiceNow', {
+        scanId,
+        errorMessage: err.message,
+        component: 'DriftDetectionWorkflow'
+      });
+    }
+
+    // Keep in-memory history for trend analysis within this session
+    if (!this._scanHistory) {
+      this._scanHistory = [];
+    }
+    this._scanHistory.push(record);
+
+    return { stored: true, scanId };
+  }
+
+  /**
+   * Compares current scan results with previous scans to identify drift trends.
+   * Answers: Is drift increasing or decreasing over time?
+   *
+   * @async
+   * @param {string} site - Target site.
+   * @param {number} [lookbackScans=10] - Number of historical scans to compare.
+   * @returns {Promise<{trend: string, currentDriftCount: number, previousDriftCount: number,
+   *   driftHistory: Array<{scanDate: string, driftCount: number, remediatedCount: number}>,
+   *   newDriftSinceLastScan: string[], resolvedSinceLastScan: string[]}>}
+   *
+   * @example
+   * const trend = await workflow.analyzeDriftTrend('NDCNG', 5);
+   * console.log(trend.trend); // 'IMPROVING', 'WORSENING', or 'STABLE'
+   */
+  async analyzeDriftTrend(site, lookbackScans = 10) {
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8302] site is required and must be a non-empty string.');
+    }
+
+    const history = (this._scanHistory || [])
+      .filter((s) => s.site === site)
+      .slice(-lookbackScans);
+
+    if (history.length === 0) {
+      return {
+        trend: 'STABLE',
+        currentDriftCount: 0,
+        previousDriftCount: 0,
+        driftHistory: [],
+        newDriftSinceLastScan: [],
+        resolvedSinceLastScan: []
+      };
+    }
+
+    const current = history[history.length - 1];
+    const previous = history.length > 1 ? history[history.length - 2] : null;
+
+    const currentDriftCount = current.driftedVMCount;
+    const previousDriftCount = previous ? previous.driftedVMCount : 0;
+
+    // Determine trend
+    let trend;
+    if (currentDriftCount < previousDriftCount) {
+      trend = 'IMPROVING';
+    } else if (currentDriftCount > previousDriftCount) {
+      trend = 'WORSENING';
+    } else {
+      trend = 'STABLE';
+    }
+
+    // Compute new and resolved drift
+    const currentVmIds = new Set((current.driftDetails || []).map((d) => d.vmId));
+    const previousVmIds = previous
+      ? new Set((previous.driftDetails || []).map((d) => d.vmId))
+      : new Set();
+
+    const newDriftSinceLastScan = [];
+    for (const vmId of currentVmIds) {
+      if (!previousVmIds.has(vmId)) {
+        newDriftSinceLastScan.push(vmId);
+      }
+    }
+
+    const resolvedSinceLastScan = [];
+    for (const vmId of previousVmIds) {
+      if (!currentVmIds.has(vmId)) {
+        resolvedSinceLastScan.push(vmId);
+      }
+    }
+
+    const driftHistory = history.map((s) => ({
+      scanDate: s.timestamp,
+      driftCount: s.driftedVMCount,
+      remediatedCount: s.remediatedCount
+    }));
+
+    this.logger.info('Drift trend analysis complete', {
+      site,
+      trend,
+      currentDriftCount,
+      previousDriftCount,
+      component: 'DriftDetectionWorkflow'
+    });
+
+    return {
+      trend,
+      currentDriftCount,
+      previousDriftCount,
+      driftHistory,
+      newDriftSinceLastScan,
+      resolvedSinceLastScan
+    };
+  }
+
+  /**
+   * Generates an executive drift summary with trend data.
+   *
+   * @async
+   * @param {string} site - Target site.
+   * @returns {Promise<{site: string, generatedAt: string, overallTrend: string,
+   *   coveragePercent: number, driftRate: number,
+   *   topDriftedCategories: Array<{category: string, count: number}>,
+   *   trendChart: Array<{date: string, driftCount: number}>}>}
+   *
+   * @example
+   * const summary = await workflow.generateDriftSummary('NDCNG');
+   * console.log(summary.overallTrend); // 'IMPROVING'
+   */
+  async generateDriftSummary(site) {
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8303] site is required and must be a non-empty string.');
+    }
+
+    const trendResult = await this.analyzeDriftTrend(site);
+
+    const history = (this._scanHistory || []).filter((s) => s.site === site);
+    const latest = history.length > 0 ? history[history.length - 1] : null;
+
+    // Calculate coverage percent (scanned without drift / total)
+    const totalScanned = latest ? latest.totalVMsScanned : 0;
+    const drifted = latest ? latest.driftedVMCount : 0;
+    const coveragePercent = totalScanned > 0
+      ? Math.round(((totalScanned - drifted) / totalScanned) * 100)
+      : 100;
+
+    // Drift rate as a percentage
+    const driftRate = totalScanned > 0
+      ? Math.round((drifted / totalScanned) * 100)
+      : 0;
+
+    // Aggregate top drifted categories from latest scan
+    const categoryMap = {};
+    if (latest && Array.isArray(latest.driftDetails)) {
+      for (const detail of latest.driftDetails) {
+        for (const cat of (detail.driftedCategories || [])) {
+          const catName = cat.category || cat;
+          categoryMap[catName] = (categoryMap[catName] || 0) + 1;
+        }
+      }
+    }
+
+    const topDriftedCategories = Object.entries(categoryMap)
+      .map(([category, count]) => ({ category, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const trendChart = trendResult.driftHistory.map((h) => ({
+      date: h.scanDate,
+      driftCount: h.driftCount
+    }));
+
+    this.logger.info('Drift executive summary generated', {
+      site,
+      overallTrend: trendResult.trend,
+      coveragePercent,
+      driftRate,
+      component: 'DriftDetectionWorkflow'
+    });
+
+    return {
+      site,
+      generatedAt: new Date().toISOString(),
+      overallTrend: trendResult.trend,
+      coveragePercent,
+      driftRate,
+      topDriftedCategories,
+      trendChart
+    };
+  }
 }
 
 module.exports = DriftDetectionWorkflow;
