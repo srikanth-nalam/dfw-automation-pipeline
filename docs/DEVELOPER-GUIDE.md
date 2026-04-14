@@ -1195,4 +1195,449 @@ This demo verifies the full drift detection lifecycle from scan initiation throu
 
 ---
 
+## 5. CMDB Access Prerequisites
+
+### 5.1 CMDB Service Account
+
+The CMDBValidator module requires read access to the ServiceNow CMDB to extract VM inventory and validate tag completeness. Configure the following:
+
+| Requirement | Details |
+|-------------|---------|
+| Service Account | `svc-vro-cmdb` (or extend `svc-vro-snow` permissions) |
+| Required Roles | `cmdb_read`, `itil` |
+| Tables Accessed | `cmdb_ci_vm_instance`, `cmdb_ci_appl`, `cmdb_rel_ci` |
+| API Permissions | REST API read access to CMDB tables and task creation |
+
+### 5.2 CMDB Table Access Verification
+
+Verify access by running the following from the vRO appliance or any REST client:
+
+```bash
+curl -u svc-vro-cmdb:password \
+  "https://instance.service-now.com/api/now/table/cmdb_ci_vm_instance?sysparm_limit=1" \
+  -H "Accept: application/json"
+```
+
+A successful response returns HTTP 200 with a JSON body containing a `result` array.
+
+---
+
+## 6. VRA Package Import Instructions
+
+### 6.1 Package Import via Orchestrator UI
+
+1. Open the Aria Automation Orchestrator client.
+2. Navigate to **Administration > Packages > Import Package**.
+3. Browse to `package/com.dfw.automation/` and select the package archive.
+4. Review the import manifest -- verify all actions, workflows, and configuration elements are listed.
+5. Click **Import** and wait for completion.
+6. Verify import by navigating to **Library > Actions** and confirming the `com.enterprise.dfw.*` modules are present.
+
+### 6.2 Package Import via CLI
+
+```bash
+cd package/
+./scripts/import-package.sh --host https://vro-host.company.internal:443 \
+  --user svc-vro-admin --password '{{vault:secret/vro/admin/password}}'
+```
+
+The import script processes actions in dependency order, creates workflows, and configures configuration elements.
+
+### 6.3 Post-Import Configuration
+
+After importing the package, update the `DFW-Pipeline-Config` configuration element with environment-specific values:
+
+| Attribute | Value |
+|-----------|-------|
+| `cmdbUrl` | `https://instance.service-now.com` |
+| `ruleRegistryTable` | `x_dfw_rule_registry` |
+| `reviewNotificationWindowDays` | `30` |
+| `reviewGracePeriodDays` | `14` |
+| `migrationBatchSize` | `50` |
+
+---
+
+## 7. New vRO Workflow Creation Instructions
+
+### 7.1 Workflow: DFW-CMDBValidation
+
+- **Purpose:** Runs CMDB validation against a specified site, generating gap reports and remediation tasks
+- **Input Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `site` | `string` | Target site code (NDCNG or TULNG) |
+| `generateTasks` | `boolean` | Whether to create remediation tasks in ServiceNow (default: true) |
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-CMDBValidation -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var CMDBValidator = System.getModule("com.enterprise.dfw.cmdb").CMDBValidator;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-CMDBValidation");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    logger.info("Starting CMDB validation", { correlationId: correlationId, site: site });
+    var validator = new CMDBValidator(config);
+    var report = validator.generateGapReport(site);
+    if (generateTasks) {
+        validator.generateRemediationTasks(report);
+    }
+    logger.info("CMDB validation completed", { correlationId: correlationId, coverage: report.coveragePercentage });
+} catch (e) {
+    logger.error("CMDB validation failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+- **Schedule:** Configure as a scheduled workflow running daily at 02:00.
+
+### 7.2 Workflow: DFW-RuleLifecycle
+
+- **Purpose:** Manages DFW rule lifecycle state transitions
+- **Input Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ruleId` | `string` | Rule identifier (DFW-R-XXXX format) |
+| `action` | `string` | Lifecycle action (analyzeImpact, approve, deployMonitor, validate, enforce, certify, rollback) |
+| `actor` | `string` | User performing the action |
+| `justification` | `string` | Reason for the state transition |
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-RuleLifecycle -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var RuleLifecycleManager = System.getModule("com.enterprise.dfw.lifecycle").RuleLifecycleManager;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-RuleLifecycle");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    logger.info("Processing rule lifecycle action", { correlationId: correlationId, ruleId: ruleId, action: action });
+    var manager = new RuleLifecycleManager(config);
+    var result;
+    switch (action) {
+        case "analyzeImpact": result = manager.analyzeImpact(ruleId); break;
+        case "approve": result = manager.transitionState(ruleId, "APPROVED", actor, justification); break;
+        case "deployMonitor": result = manager.deployMonitor(ruleId, config.site); break;
+        case "validate": result = manager.transitionState(ruleId, "VALIDATED", actor, justification); break;
+        case "enforce": result = manager.enforceRule(ruleId, config.site); break;
+        case "certify": result = manager.transitionState(ruleId, "CERTIFIED", actor, justification); break;
+        case "rollback": result = manager.rollbackRule(ruleId, justification, actor); break;
+        default: throw new Error("Unknown action: " + action);
+    }
+    logger.info("Rule lifecycle action completed", { correlationId: correlationId, result: result });
+} catch (e) {
+    logger.error("Rule lifecycle action failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+### 7.3 Workflow: DFW-RuleReview
+
+- **Purpose:** Scheduled workflow that scans for rules due for review, sends notifications, and auto-expires overdue rules
+- **Input Parameters:** None (configuration is read from the configuration element)
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-RuleReview -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var RuleReviewScheduler = System.getModule("com.enterprise.dfw.lifecycle").RuleReviewScheduler;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-RuleReview");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    logger.info("Starting rule review scan", { correlationId: correlationId });
+    var scheduler = new RuleReviewScheduler(config);
+    var dueRules = scheduler.scanForReviewDue();
+    if (dueRules.length > 0) {
+        scheduler.notifyOwners(dueRules);
+    }
+    var overdueRules = scheduler.escalateOverdue(dueRules);
+    var expiredRules = scheduler.autoExpire(overdueRules);
+    logger.info("Rule review scan completed", {
+        correlationId: correlationId,
+        dueCount: dueRules.length,
+        escalatedCount: overdueRules.length,
+        expiredCount: expiredRules.length
+    });
+} catch (e) {
+    logger.error("Rule review scan failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+- **Schedule:** Configure as a scheduled workflow running daily at 06:00.
+
+### 7.4 Workflow: DFW-MigrationBulkTag
+
+- **Purpose:** Processes migration wave manifests for bulk tag application during Greenzone VM migrations
+- **Input Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `manifestJson` | `string` | JSON string containing the migration manifest |
+| `waveId` | `string` | Specific wave to process (or "all" for full manifest) |
+| `dryRun` | `boolean` | If true, validate only without applying tags |
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-MigrationBulkTag -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var MigrationBulkTagger = System.getModule("com.enterprise.dfw.lifecycle").MigrationBulkTagger;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-MigrationBulkTag");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    var manifest = JSON.parse(manifestJson);
+    logger.info("Starting migration bulk tag", { correlationId: correlationId, waveId: waveId, dryRun: dryRun });
+    var tagger = new MigrationBulkTagger(config);
+    tagger.loadManifest(manifest);
+    var validationResult = tagger.preValidate(waveId);
+    if (!dryRun && validationResult.valid) {
+        var waveResult = tagger.executeWave(waveId);
+        var verifyResult = tagger.verifyPostMigration(waveId);
+        var report = tagger.generateWaveReport(waveId);
+        logger.info("Migration bulk tag completed", { correlationId: correlationId, result: report.summary });
+    } else {
+        logger.info("Migration bulk tag dry run completed", { correlationId: correlationId, validation: validationResult });
+    }
+} catch (e) {
+    logger.error("Migration bulk tag failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+---
+
+## 8. ServiceNow Deployment for New Components
+
+### 8.1 x_dfw_rule_registry Table
+
+1. Navigate to: **System Definition > Tables > New**
+2. Set:
+   - Label: `DFW Rule Registry`
+   - Name: `x_dfw_rule_registry`
+   - Add to Module: `DFW Automation`
+3. Add columns as specified in the LLD Section 8.3 (RuleRegistry table schema).
+4. Click **Submit** to create the table.
+5. Add unique index on `u_rule_id`.
+
+### 8.2 cmdbTagSyncRule Business Rule
+
+**File:** `src/servicenow/business-rules/cmdbTagSyncRule.js`
+- Navigate to: **System Definition > Business Rules > New**
+- Configuration:
+  - Name: `CMDB Tag Sync Rule`
+  - Table: `cmdb_ci_vm_instance`
+  - When to run: **after** update
+  - Filter: Add conditions for monitored fields (environment, application, tier)
+  - Script: Paste the file contents from `src/servicenow/business-rules/cmdbTagSyncRule.js`
+  - Active: true
+  - Order: 200
+
+### 8.3 DFW Rule Request Catalog Item
+
+1. Navigate to: **Service Catalog > Catalog Definitions > Maintain Items > New**
+2. Configuration:
+   - Name: `DFW Rule Request`
+   - Category: `Security`
+   - Variables:
+
+| Variable | Type | Mandatory | Notes |
+|----------|------|-----------|-------|
+| Rule Name | String | Yes | Human-readable rule name |
+| Description | Multi-line Text | Yes | Detailed rule description |
+| Source Group | Reference | Yes | Table: NSX security groups |
+| Destination Group | Reference | Yes | Table: NSX security groups |
+| Services/Ports | String | Yes | Comma-separated port list |
+| Action | Select Box | Yes | Choices: ALLOW, DROP, REJECT |
+| Site | Select Box | Yes | Choices: NDCNG, TULNG |
+| Justification | Multi-line Text | Yes | Business justification |
+
+3. Attach client script: `ruleRequest_onLoad.js`
+4. Workflow: Security Architect approval required
+
+### 8.4 Scheduled Jobs
+
+Create the following scheduled jobs in ServiceNow or vRO:
+
+| Job Name | Schedule | Target Workflow | Description |
+|----------|----------|----------------|-------------|
+| DFW CMDB Validation - NDCNG | Daily 02:00 | DFW-CMDBValidation | Validate CMDB tag coverage for NDCNG site |
+| DFW CMDB Validation - TULNG | Daily 02:30 | DFW-CMDBValidation | Validate CMDB tag coverage for TULNG site |
+| DFW Rule Review Scan | Daily 06:00 | DFW-RuleReview | Scan for rules due for review and send notifications |
+| DFW Drift Detection - NDCNG | Every 4 hours | DFW-DriftDetection | Scheduled drift scan for NDCNG |
+| DFW Drift Detection - TULNG | Every 4 hours | DFW-DriftDetection | Scheduled drift scan for TULNG |
+
+---
+
+## 9. Test Data Setup for New Modules
+
+### 9.1 Rule Registry Test Data
+
+Populate the `x_dfw_rule_registry` table with the following test records:
+
+```javascript
+// Background script to populate Rule Registry test data
+var rules = [
+    {
+        rule_id: 'DFW-R-0001',
+        rule_name: 'Web Tier HTTP Inbound',
+        description: 'Allow HTTP/HTTPS inbound to web tier from load balancer',
+        current_state: 'ENFORCED',
+        site: 'NDCNG',
+        source_channel: 'Catalog',
+        review_cadence_days: 90,
+        expiry_date: '2026-07-15'
+    },
+    {
+        rule_id: 'DFW-R-0002',
+        rule_name: 'App Tier API Access',
+        description: 'Allow API traffic from web tier to application tier',
+        current_state: 'MONITOR_MODE',
+        site: 'NDCNG',
+        source_channel: 'Onboarding',
+        review_cadence_days: 90,
+        expiry_date: '2026-08-01'
+    },
+    {
+        rule_id: 'DFW-R-0003',
+        rule_name: 'Database Tier Access',
+        description: 'Allow database connections from app tier to database tier',
+        current_state: 'REVIEW_DUE',
+        site: 'NDCNG',
+        source_channel: 'Catalog',
+        review_cadence_days: 60,
+        expiry_date: '2026-04-20'
+    }
+];
+
+rules.forEach(function(rule) {
+    var gr = new GlideRecord('x_dfw_rule_registry');
+    gr.initialize();
+    gr.u_rule_id = rule.rule_id;
+    gr.u_rule_name = rule.rule_name;
+    gr.u_description = rule.description;
+    gr.u_current_state = rule.current_state;
+    gr.u_site = rule.site;
+    gr.u_source_channel = rule.source_channel;
+    gr.u_review_cadence_days = rule.review_cadence_days;
+    gr.u_expiry_date = rule.expiry_date;
+    gr.u_created_date = new GlideDateTime().getDisplayValue();
+    gr.insert();
+});
+gs.info('Rule Registry: Inserted ' + rules.length + ' test records.');
+```
+
+### 9.2 Migration Manifest Test Data
+
+Create a test migration manifest file for the MigrationBulkTagger:
+
+```json
+{
+    "manifestId": "MIG-2026-Q2-TEST-01",
+    "description": "Test migration wave for Greenzone Phase 1",
+    "waves": [
+        {
+            "waveId": "WAVE-TEST-001",
+            "scheduledDate": "2026-04-15",
+            "vms": [
+                {
+                    "vmName": "NDCNG-APP001-WEB-P01",
+                    "cmdbCi": "CI-APP001-WEB-P01",
+                    "tags": {
+                        "Region": "NDCNG",
+                        "SecurityZone": "Internal",
+                        "Environment": "Production",
+                        "AppCI": "APP001",
+                        "SystemRole": "WebServer"
+                    }
+                },
+                {
+                    "vmName": "NDCNG-APP001-APP-P01",
+                    "cmdbCi": "CI-APP001-APP-P01",
+                    "tags": {
+                        "Region": "NDCNG",
+                        "SecurityZone": "Internal",
+                        "Environment": "Production",
+                        "AppCI": "APP001",
+                        "SystemRole": "AppServer"
+                    }
+                }
+            ]
+        }
+    ]
+}
+```
+
+---
+
+## 10. Packaging and Deployment
+
+### 10.1 VRA Package Structure
+
+The `package/` directory at the repository root contains the complete VRA deployment package:
+
+```
+package/
+  com.dfw.automation/
+    actions/          # All vRO actions organized by module
+    workflows/        # Workflow XML definitions
+    config-elements/  # Configuration element templates
+  scripts/
+    import-package.sh   # Automated import script
+    export-package.sh   # Package export for versioning
+  servicenow/
+    tables/            # Table XML update sets
+    business-rules/    # Business rule update sets
+    catalog-items/     # Catalog item configurations
+    client-scripts/    # Client script update sets
+    server-scripts/    # Server script update sets
+    scheduled-jobs/    # Scheduled job configurations
+    ui-policies/       # UI policy update sets
+    scripted-rest-apis/ # REST API definitions
+```
+
+### 10.2 Full Deployment Sequence
+
+1. **Import vRO package**: Use the Orchestrator UI or `scripts/import-package.sh` to import all actions and workflows.
+2. **Configure endpoints**: Update the `DFW-Pipeline-Config` configuration element with environment-specific URLs and credential vault references.
+3. **Import ServiceNow update sets**: Import update sets from `package/servicenow/` in the following order:
+   - Tables (`x_dfw_rule_registry`, `u_enterprise_tag_dictionary`)
+   - Business rules (`cmdbTagSyncRule`, `tagFieldServerValidation`)
+   - Server scripts (`catalogItemValidation`, `tagDictionaryLookup`)
+   - Client scripts (all `*_onLoad.js` and `*_onChange.js`)
+   - Catalog items (VM Build, Tag Update, Decommission, Quarantine, Rule Request, Bulk Tag)
+   - Scheduled jobs (CMDB validation, rule review, drift detection)
+   - UI policies and scripted REST APIs
+4. **Configure NSX tag categories**: Create the 5 mandatory + 3 optional tag categories in each NSX Manager.
+5. **Create security groups**: Create dynamic security groups based on the new tag taxonomy.
+6. **Deploy DFW policies**: Import or create DFW policies from `policies/dfw-rules/` YAML files.
+7. **Verify connectivity**: Test REST API connectivity between all integration endpoints.
+8. **Run validation**: Execute the DFW-CMDBValidation workflow to verify CMDB data quality.
+
+---
+
 *For architecture details, see [SDD.md](SDD.md), [HLD.md](HLD.md), and [LLD.md](LLD.md). For operational procedures, see [RUNBOOK.md](RUNBOOK.md). For test strategy, see [TEST-STRATEGY.md](TEST-STRATEGY.md).*

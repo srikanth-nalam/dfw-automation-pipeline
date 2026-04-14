@@ -1600,4 +1600,299 @@ stateDiagram-v2
 
 ---
 
+## 8. Extended Module-Level Design
+
+### 8.1 CMDBValidator (`src/vro/actions/cmdb/CMDBValidator.js`)
+
+**Responsibility**: Scheduled validation engine that extracts VM inventory from ServiceNow CMDB, validates 5-tag completeness against the mandatory taxonomy, assesses tag quality, and generates structured gap reports with automated remediation task creation.
+
+**Dependencies**: `RestClient` (for CMDB API calls), `Logger` (for structured logging), `ConfigLoader` (for CMDB endpoint resolution), `ErrorFactory` (for structured error creation).
+
+**Key Methods**:
+
+- `extractVMInventory(site: string): Promise<Array<VMRecord>>` -- Queries ServiceNow CMDB `cmdb_ci_vm_instance` table for all VMs at the specified site with `operational_status=1`. Uses pagination (default page size: 200) to handle large inventories. Returns an array of VM records with sys_id, name, IP address, and current tag assignments from NSX.
+
+- `validateCoverage(inventory: Array<VMRecord>): CoverageReport` -- Checks each VM in the inventory against the 5-tag mandatory taxonomy (Region, SecurityZone, Environment, AppCI, SystemRole). Returns a structured report with per-VM compliance status.
+
+- `validateQuality(inventory: Array<VMRecord>): QualityReport` -- Performs deeper validation: Region tag matches physical site, AppCI tag references a valid CMDB application CI, SecurityZone tag is consistent with the VM's network segment, and tag values are not stale (updated within configured threshold, default: 90 days).
+
+- `generateGapReport(site: string): Promise<GapReport>` -- Orchestrates the full validation pipeline (extract, validate coverage, validate quality) and produces a structured gap report. Creates remediation tasks in ServiceNow for each non-compliant VM.
+
+- `generateRemediationTasks(gapReport: GapReport): Promise<Array<TaskId>>` -- Creates ServiceNow tasks for each gap identified in the report. Tasks are assigned to the VM owner or assignment group from the CMDB CI record.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-9001 | CMDB extraction failed -- ServiceNow API returned error | CONNECTIVITY | Yes |
+| DFW-9002 | VM not found in NSX fabric inventory -- CMDB record exists but no NSX VM match | DATA_QUALITY | No |
+| DFW-9003 | Mandatory tag missing -- one or more of the 5 required tags absent | VALIDATION | No |
+| DFW-9004 | Tag value inconsistency -- tag value does not match CMDB field | DATA_QUALITY | No |
+| DFW-9005 | Stale tag detected -- tag not updated within staleness threshold | DATA_QUALITY | No |
+| DFW-9006 | Remediation task creation failed -- ServiceNow task API error | CONNECTIVITY | Yes |
+
+**Gap Report Structure**:
+```javascript
+{
+  site: 'NDCNG',
+  scanTimestamp: '2026-04-14T02:00:00.000Z',
+  totalVMs: 1250,
+  compliantVMs: 1180,
+  nonCompliantVMs: 70,
+  coveragePercentage: 94.4,
+  qualityScore: 91.2,
+  gaps: [
+    {
+      vmId: 'vm-42',
+      vmName: 'NDCNG-APP001-WEB-P01',
+      missingTags: ['SecurityZone'],
+      invalidTags: [],
+      staleTags: ['CostCenter'],
+      severity: 'critical',
+      remediationTaskId: 'TASK0012345'
+    }
+  ],
+  kpiTrend: {
+    previousCoverage: 92.1,
+    coverageDelta: +2.3,
+    previousQuality: 89.8,
+    qualityDelta: +1.4
+  }
+}
+```
+
+---
+
+### 8.2 RuleLifecycleManager (`src/vro/actions/lifecycle/RuleLifecycleManager.js`)
+
+**Responsibility**: Manages the full DFW rule lifecycle through a formal finite state machine. Enforces legal state transitions, maintains an immutable audit trail, and coordinates with the RuleRegistry for persistence.
+
+**Dependencies**: `RuleRegistry` (for rule persistence), `Logger` (for structured logging), `ErrorFactory` (for structured error creation), `ImpactAnalysisAction` (for pre-deployment impact analysis), `NsxApiAdapter` (for rule deployment to NSX).
+
+**State Machine Definition**:
+
+| State | Valid Transitions To |
+|-------|---------------------|
+| REQUESTED | IMPACT_ANALYZED |
+| IMPACT_ANALYZED | APPROVED, ROLLED_BACK |
+| APPROVED | MONITOR_MODE |
+| MONITOR_MODE | VALIDATED, ROLLED_BACK |
+| VALIDATED | ENFORCED |
+| ENFORCED | CERTIFIED, REVIEW_DUE, ROLLED_BACK |
+| CERTIFIED | ENFORCED |
+| REVIEW_DUE | CERTIFIED, EXPIRED |
+| EXPIRED | REQUESTED |
+| ROLLED_BACK | REQUESTED |
+
+**Key Methods**:
+
+- `transitionState(ruleId: string, newState: string, actor: string, justification: string): Promise<TransitionResult>` -- Validates the requested transition against the state machine whitelist. If valid, updates the rule state in the RuleRegistry and writes an audit trail entry. Throws DFW-10001 if the transition is not permitted from the current state.
+
+- `getState(ruleId: string): Promise<string>` -- Returns the current lifecycle state of the specified rule.
+
+- `getHistory(ruleId: string): Promise<Array<AuditEntry>>` -- Returns the complete state transition history for the rule, ordered chronologically.
+
+- `analyzeImpact(ruleId: string): Promise<ImpactReport>` -- Triggers impact analysis for a rule in REQUESTED state. Evaluates which VMs, security groups, and existing DFW policies would be affected by the proposed rule. Transitions the rule to IMPACT_ANALYZED upon completion.
+
+- `deployMonitor(ruleId: string, site: string): Promise<DeployResult>` -- Deploys the rule to NSX Manager in monitor mode (action=ALLOW with logging). Transitions the rule to MONITOR_MODE.
+
+- `enforceRule(ruleId: string, site: string): Promise<EnforceResult>` -- Changes the rule action from monitor to enforce on the NSX data plane. Transitions the rule to ENFORCED.
+
+- `rollbackRule(ruleId: string, reason: string, actor: string): Promise<RollbackResult>` -- Removes the rule from NSX Manager and transitions to ROLLED_BACK. Preserves the full rule configuration for forensic analysis and re-submission.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-10001 | Illegal state transition -- requested transition not permitted from current state | VALIDATION | No |
+| DFW-10002 | Rule not found -- ruleId does not exist in the registry | VALIDATION | No |
+| DFW-10003 | Impact analysis failed -- unable to evaluate rule impact | INFRASTRUCTURE | Yes |
+| DFW-10004 | Monitor deployment failed -- NSX API error during rule deployment | CONNECTIVITY | Yes |
+| DFW-10005 | Enforcement failed -- NSX API error during action change | CONNECTIVITY | Yes |
+| DFW-10006 | Rollback failed -- NSX API error during rule removal | CONNECTIVITY | Yes |
+| DFW-10007 | Audit trail write failed -- unable to persist state transition record | CONNECTIVITY | Yes |
+| DFW-10008 | Validation period not elapsed -- cannot promote to VALIDATED before monitoring period ends | VALIDATION | No |
+| DFW-10009 | Certification missing required attestation -- owner must provide justification | VALIDATION | No |
+| DFW-10010 | Rule already in target state -- no transition needed | VALIDATION | No |
+
+**Audit Entry Structure**:
+```javascript
+{
+  ruleId: 'DFW-R-0042',
+  fromState: 'APPROVED',
+  toState: 'MONITOR_MODE',
+  actor: 'security-architect-01',
+  timestamp: '2026-04-14T10:30:00.000Z',
+  justification: 'Deploying to monitor mode for 7-day validation period',
+  metadata: {
+    nsxPolicyId: 'policy-123',
+    site: 'NDCNG'
+  }
+}
+```
+
+---
+
+### 8.3 RuleRegistry (`src/vro/actions/lifecycle/RuleRegistry.js`)
+
+**Responsibility**: Provides CRUD operations against the `x_dfw_rule_registry` custom ServiceNow table. Manages unique rule ID generation, full audit history, and search capabilities.
+
+**Dependencies**: `RestClient` (for ServiceNow API calls), `Logger` (for structured logging), `ErrorFactory` (for structured error creation).
+
+**Table Schema -- `x_dfw_rule_registry`**:
+
+| Column | Type | Mandatory | Description |
+|--------|------|-----------|-------------|
+| `u_rule_id` | String (12) | Yes | Unique rule identifier in format DFW-R-XXXX |
+| `u_rule_name` | String (256) | Yes | Human-readable rule name |
+| `u_description` | String (2000) | Yes | Detailed rule description |
+| `u_owner` | Reference (sys_user) | Yes | Rule owner responsible for certification |
+| `u_current_state` | Choice | Yes | Current lifecycle state |
+| `u_nsx_policy_id` | String (128) | No | NSX policy ID when deployed |
+| `u_site` | Choice | Yes | Target site (NDCNG, TULNG) |
+| `u_source_channel` | Choice | Yes | Request source (Catalog, Onboarding, Emergency, Audit) |
+| `u_created_date` | DateTime | Yes | Rule creation timestamp |
+| `u_last_review_date` | DateTime | No | Last certification date |
+| `u_expiry_date` | DateTime | No | Certification expiry date |
+| `u_review_cadence_days` | Integer | Yes | Days between required reviews (default: 90) |
+| `u_rule_definition` | JSON | Yes | Complete rule specification (source, destination, services, action) |
+| `u_impact_report` | JSON | No | Impact analysis results |
+| `u_audit_history` | Journal | Yes | Immutable state transition log |
+
+**Key Methods**:
+
+- `registerRule(ruleDefinition: object): Promise<{ruleId: string, created: boolean}>` -- Creates a new rule entry with auto-generated DFW-R-XXXX ID. Validates the rule definition against the rule schema. Performs duplicate detection by comparing source, destination, and service definitions against existing rules.
+
+- `getRule(ruleId: string): Promise<RuleRecord>` -- Returns the full rule record including current state, audit history, and all metadata.
+
+- `updateRule(ruleId: string, updates: object): Promise<{updated: boolean}>` -- Updates mutable fields (description, owner, review cadence). State changes must go through the RuleLifecycleManager, not direct updates.
+
+- `searchRules(criteria: object): Promise<Array<RuleRecord>>` -- Searches rules by owner, state, site, source channel, or expiry date range.
+
+- `getNextId(): Promise<string>` -- Generates the next available DFW-R-XXXX ID by querying the maximum existing ID and incrementing.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-11001 | Rule registration failed -- ServiceNow API error | CONNECTIVITY | Yes |
+| DFW-11002 | Duplicate rule detected -- rule with identical source/destination/service already exists | VALIDATION | No |
+| DFW-11003 | Rule not found -- ruleId does not exist | VALIDATION | No |
+| DFW-11004 | Rule update failed -- ServiceNow API error | CONNECTIVITY | Yes |
+| DFW-11005 | Invalid rule definition -- schema validation failed | VALIDATION | No |
+| DFW-11006 | Rule ID generation failed -- unable to determine next available ID | INFRASTRUCTURE | Yes |
+
+---
+
+### 8.4 RuleRequestPipeline (`src/vro/actions/lifecycle/RuleRequestPipeline.js`)
+
+**Responsibility**: Provides a unified intake pipeline for DFW rule requests from four source channels, normalizing each into a common format for the RuleLifecycleManager.
+
+**Dependencies**: `RuleRegistry` (for rule registration), `RuleLifecycleManager` (for state initialization), `PayloadValidator` (for request validation), `Logger` (for structured logging).
+
+**Intake Channels**:
+
+| Channel | Source | Trigger | Priority |
+|---------|--------|---------|----------|
+| Catalog | ServiceNow Catalog -- DFW Rule Request item | User submits catalog request | Normal |
+| Onboarding | LegacyOnboardingOrchestrator or MigrationBulkTagger | Automated rule creation during onboarding | Normal |
+| Emergency | Security incident response | Break-glass emergency rule request | High |
+| Audit | RuleReviewScheduler or compliance scan | Audit finding requires rule creation or modification | Normal |
+
+**Key Methods**:
+
+- `submitRequest(source: string, requestPayload: object): Promise<{ruleId: string, state: string}>` -- Validates the request payload against the source-specific schema, normalizes it to the common rule format, registers the rule in the RuleRegistry, and initializes it in REQUESTED state.
+
+- `normalizePayload(source: string, rawPayload: object): RuleDefinition` -- Transforms source-specific payload formats into the common rule definition format. Each source has different field names and structures; this method harmonizes them.
+
+- `validateSource(source: string): boolean` -- Validates that the source string is one of the four recognized intake channels.
+
+---
+
+### 8.5 RuleReviewScheduler (`src/vro/actions/lifecycle/RuleReviewScheduler.js`)
+
+**Responsibility**: Runs scheduled scans against the rule registry to identify rules approaching their review deadline, sends notifications to rule owners, escalates overdue reviews, and auto-expires rules past their certification deadline.
+
+**Dependencies**: `RuleRegistry` (for rule queries), `RuleLifecycleManager` (for state transitions), `RestClient` (for ServiceNow notification APIs), `Logger` (for structured logging), `ConfigLoader` (for notification configuration).
+
+**Key Methods**:
+
+- `scanForReviewDue(): Promise<ScanResult>` -- Queries the RuleRegistry for all rules in ENFORCED state whose `u_expiry_date` is within the notification window (configurable, default: 30 days). Returns a list of rules requiring attention.
+
+- `notifyOwners(dueRules: Array<RuleRecord>): Promise<NotificationResult>` -- Sends email and ServiceNow notifications to each rule's owner. Notification content includes the rule ID, name, current expiry date, and a link to the certification form.
+
+- `escalateOverdue(overdueRules: Array<RuleRecord>): Promise<EscalationResult>` -- For rules past their expiry date but within the grace period (configurable, default: 14 days), creates escalation incidents in ServiceNow assigned to the rule owner's management chain.
+
+- `autoExpire(expiredRules: Array<RuleRecord>): Promise<ExpiryResult>` -- For rules past the grace period, transitions them to EXPIRED state via the RuleLifecycleManager, which disables the corresponding NSX DFW rule.
+
+**Scan Configuration**:
+```javascript
+{
+  notificationWindowDays: 30,   // Days before expiry to begin notifications
+  gracePeriodDays: 14,          // Days after expiry before auto-disable
+  notificationIntervalDays: 7,  // Days between reminder notifications
+  escalationThresholdDays: 7,   // Days after expiry to escalate
+  scanSchedule: '0 6 * * *'    // Daily at 06:00
+}
+```
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-12001 | Review scan failed -- unable to query rule registry | CONNECTIVITY | Yes |
+| DFW-12002 | Notification delivery failed -- ServiceNow email/notification API error | CONNECTIVITY | Yes |
+| DFW-12003 | Escalation incident creation failed -- ServiceNow incident API error | CONNECTIVITY | Yes |
+| DFW-12004 | Auto-expiry transition failed -- RuleLifecycleManager returned error | INFRASTRUCTURE | Yes |
+| DFW-12005 | Owner not found -- rule owner reference points to inactive user | DATA_QUALITY | No |
+
+---
+
+### 8.6 MigrationBulkTagger (`src/vro/actions/lifecycle/MigrationBulkTagger.js`)
+
+**Responsibility**: Processes Greenzone VM migration manifests in waves, applying tags based on manifest definitions with pre-validation and post-migration tag persistence verification.
+
+**Dependencies**: `TagOperations` (for tag application), `CMDBValidator` (for pre-validation), `GroupMembershipVerifier` (for post-migration group verification), `Logger` (for structured logging), `RateLimiter` (for NSX API throttling), `SagaCoordinator` (for rollback support).
+
+**Key Methods**:
+
+- `loadManifest(manifestPath: string): Promise<MigrationManifest>` -- Parses a JSON or YAML migration manifest containing wave definitions. Each wave specifies a set of VMs with their target tag assignments. Validates the manifest structure against the migration manifest schema.
+
+- `preValidate(wave: WaveDefinition): Promise<ValidationResult>` -- Validates all VM entries in the wave against the tag dictionary, CMDB CI records, and NSX fabric inventory. Reports any VMs that cannot be found, have invalid tag assignments, or have conflicting existing tags.
+
+- `executeWave(waveId: string): Promise<WaveResult>` -- Processes all VMs in the specified wave, applying tags with progress tracking. Uses the RateLimiter to throttle NSX API calls and the SagaCoordinator for rollback support. Reports per-VM status (success, failed, skipped).
+
+- `verifyPostMigration(waveId: string): Promise<VerificationResult>` -- After migration completes, verifies that all tags applied during `executeWave()` are still present on the VMs at their new location. Re-applies any missing tags and confirms security group membership restoration.
+
+- `generateWaveReport(waveId: string): Promise<WaveReport>` -- Produces a comprehensive wave report including pre-validation results, execution statistics, post-migration verification outcomes, and per-VM status details.
+
+**Manifest Structure**:
+```javascript
+{
+  manifestId: 'MIG-2026-Q2-WAVE-01',
+  description: 'Greenzone migration wave 1 -- Production web tier',
+  waves: [
+    {
+      waveId: 'WAVE-001',
+      scheduledDate: '2026-04-15',
+      vms: [
+        {
+          vmName: 'NDCNG-APP001-WEB-P01',
+          cmdbCi: 'CI-APP001-WEB-P01',
+          tags: {
+            Region: 'NDCNG',
+            SecurityZone: 'Internal',
+            Environment: 'Production',
+            AppCI: 'APP001',
+            SystemRole: 'WebServer'
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
 *End of Low Level Design*

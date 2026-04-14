@@ -774,4 +774,88 @@ All audit logs are retained for a minimum of 7 years to satisfy SOX, PCI DSS, an
 
 ---
 
+## 8. CMDB Validation and Rule Lifecycle Components
+
+### 8.1 Extended Component Inventory
+
+The following components extend the pipeline to support CMDB data quality validation, DFW rule lifecycle management, migration-event-driven bulk tagging, and periodic rule review.
+
+#### 8.1.1 CMDBValidator
+
+| Component | Module Path | Purpose | Design Pattern |
+|-----------|------------|---------|----------------|
+| `CMDBValidator` | `src/vro/actions/cmdb/` | Extracts VM inventory from ServiceNow CMDB, validates 5-tag completeness per VM, and generates gap reports with remediation tasks. Operates as a scheduled validation engine that ensures all managed VMs maintain complete tag coverage against the 5-tag mandatory taxonomy (Region, SecurityZone, Environment, AppCI, SystemRole). | Scheduled Validation, Read-Only Query |
+
+#### 8.1.2 RuleLifecycleManager
+
+| Component | Module Path | Purpose | Design Pattern |
+|-----------|------------|---------|----------------|
+| `RuleLifecycleManager` | `src/vro/actions/lifecycle/` | Manages the full DFW rule lifecycle through a formal state machine with states: REQUESTED, IMPACT_ANALYZED, APPROVED, MONITOR_MODE, VALIDATED, ENFORCED, CERTIFIED, REVIEW_DUE, EXPIRED, and ROLLED_BACK. Enforces legal transition paths and maintains an immutable audit trail for every state change. | State Machine, Audit Trail |
+
+#### 8.1.3 RuleRegistry
+
+| Component | Module Path | Purpose | Design Pattern |
+|-----------|------------|---------|----------------|
+| `RuleRegistry` | `src/vro/actions/lifecycle/` | Provides CRUD operations against the `x_dfw_rule_registry` custom ServiceNow table. Each rule receives a unique identifier (DFW-R-XXXX format) and carries metadata including owner, creation date, last review date, expiry date, and state transition history. | Repository, Registry |
+
+#### 8.1.4 RuleReviewScheduler
+
+| Component | Module Path | Purpose | Design Pattern |
+|-----------|------------|---------|----------------|
+| `RuleReviewScheduler` | `src/vro/actions/lifecycle/` | Runs scheduled scans against the rule registry to identify rules approaching their review deadline. Sends owner notifications, escalates overdue reviews through ServiceNow incident management, and auto-expires rules that are not re-certified within the configured grace period. | Scheduled Scan, Notification |
+
+#### 8.1.5 RuleRequestPipeline
+
+| Component | Module Path | Purpose | Design Pattern |
+|-----------|------------|---------|----------------|
+| `RuleRequestPipeline` | `src/vro/actions/lifecycle/` | Provides a unified intake pipeline for DFW rule requests from four source channels: ServiceNow Catalog, Onboarding workflows, Emergency requests, and Audit-driven requests. Normalizes requests from all sources into a common format and feeds them into the RuleLifecycleManager. | Pipeline, Adapter |
+
+#### 8.1.6 MigrationBulkTagger
+
+| Component | Module Path | Purpose | Design Pattern |
+|-----------|------------|---------|----------------|
+| `MigrationBulkTagger` | `src/vro/actions/lifecycle/` | Processes Greenzone VM migration manifests in waves, applying tags based on manifest definitions. Supports pre-validation, wave-based execution with progress tracking, and post-migration tag persistence verification. | Batch Orchestrator, Manifest-Driven |
+
+### 8.2 Updated Data Flow -- Rule Lifecycle
+
+The rule lifecycle data flow spans ServiceNow (request intake and approval), vRO (impact analysis, deployment, and monitoring), and NSX Manager (rule enforcement and realized-state verification):
+
+```mermaid
+flowchart TB
+    A["Rule Request\nCatalog, Onboarding,\nEmergency, or Audit"] --> B["RuleRequestPipeline\nNormalize and validate"]
+    B --> C["RuleRegistry\nAssign DFW-R-XXXX ID"]
+    C --> D["RuleLifecycleManager\nState: REQUESTED"]
+    D --> E["Impact Analysis\nEvaluate affected VMs,\ngroups, and policies"]
+    E --> F["State: IMPACT_ANALYZED\nAwait approval"]
+    F --> G["Approval Workflow\nSecurity Architect review"]
+    G --> H["State: APPROVED\nDeploy in monitor mode"]
+    H --> I["NSX Manager\nDeploy rule with\naction=ALLOW+LOG"]
+    I --> J["State: MONITOR_MODE\nObserve traffic patterns"]
+    J --> K["Validation Period\nAnalyze logged traffic"]
+    K --> L["State: VALIDATED\nPromote to enforcement"]
+    L --> M["NSX Manager\nChange action to\nENFORCE"]
+    M --> N["State: ENFORCED\nActive on data plane"]
+    N --> O["RuleReviewScheduler\nPeriodic certification scan"]
+    O --> P["State: REVIEW_DUE\nNotify rule owner"]
+    P --> Q{"Owner re-certifies?"}
+    Q -->|Yes| R["State: CERTIFIED\nReturn to ENFORCED"]
+    Q -->|No| S["State: EXPIRED\nRule disabled in NSX"]
+```
+
+### 8.3 CMDB Validation Flow
+
+```mermaid
+flowchart TB
+    A["Scheduled Job\nDaily CMDB validation"] --> B["CMDBValidator\nextractVMInventory(site)"]
+    B --> C["ServiceNow CMDB\nQuery cmdb_ci_vm_instance"]
+    C --> D["VM Inventory\nAll managed VMs at site"]
+    D --> E["validateCoverage(inventory)\nCheck 5-tag completeness"]
+    E --> F["validateQuality(inventory)\nCheck value consistency"]
+    F --> G["generateGapReport(site)\nProduce structured report"]
+    G --> H["Create Remediation Tasks\nin ServiceNow"]
+    G --> I["Update KPI Dashboard\nCoverage and quality metrics"]
+```
+
+---
+
 *End of High Level Design*

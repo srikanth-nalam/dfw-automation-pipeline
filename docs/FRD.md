@@ -349,4 +349,84 @@ The following table provides a high-level summary of the traceability between fu
 
 ---
 
+## 11. FR-066 through FR-073: CMDB Validation, Rule Lifecycle, Migration Tagging, and Packaging
+
+These requirements define the extended capabilities for CMDB data quality validation, DFW rule lifecycle management, migration-event-driven bulk tagging, periodic rule review, CMDB-driven event synchronization, and VRA package deployment.
+
+### 11.1 5-Tag Security Taxonomy
+
+The pipeline adopts a 5-tag mandatory security taxonomy aligned with the client security architecture:
+
+| Tag Category | Cardinality | NSX Scope | Governance |
+|-------------|------------|-----------|------------|
+| Region | Single | Region | Mandatory -- geographic site identifier (e.g., NDCNG, TULNG) |
+| SecurityZone | Single | SecurityZone | Mandatory -- network security zone (e.g., DMZ, Internal, Restricted) |
+| Environment | Single | Environment | Mandatory -- deployment lifecycle stage |
+| AppCI | Single | AppCI | Mandatory -- CMDB application CI reference |
+| SystemRole | Single | SystemRole | Mandatory -- workload function (e.g., WebServer, AppServer, Database) |
+
+Optional tags for governance and financial tracking:
+
+| Tag Category | Cardinality | NSX Scope | Governance |
+|-------------|------------|-----------|------------|
+| Compliance | Multi | Compliance | Optional -- regulatory frameworks (PCI, HIPAA, SOX) |
+| DataClassification | Single | DataClassification | Optional -- data sensitivity level |
+| CostCenter | Single | CostCenter | Optional -- financial chargeback identifier |
+
+### 11.2 Requirement Traceability
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-066 | CMDBValidator extracts VM inventory from ServiceNow CMDB, validates 5-tag completeness per VM, and generates gap reports with remediation tasks | CMDBValidator -- `extractVMInventory()`, `validateCoverage()`, `validateQuality()`, `generateGapReport()` | `src/vro/actions/cmdb/CMDBValidator.js` | TC-066 | `generateGapReport(site)` returns a structured report listing VMs missing one or more of the 5 mandatory tags; remediation tasks are created in ServiceNow for each gap; report includes KPI metrics (coverage percentage, quality score) |
+| FR-067 | 5-tag security taxonomy enforces Region, SecurityZone, Environment, AppCI, and SystemRole as mandatory tags with optional Compliance, DataClassification, and CostCenter | TagCardinalityEnforcer -- updated `CATEGORY_CONFIG`; CMDBValidator -- `validateCoverage()` | `src/vro/actions/tags/TagCardinalityEnforcer.js`, `src/vro/actions/cmdb/CMDBValidator.js` | TC-067 | All 5 mandatory tags must be present on every managed VM; `validateCoverage()` returns `{complete: false}` when any mandatory tag is missing; optional tags do not trigger validation failures when absent |
+| FR-068 | DFW rule lifecycle managed through a full state machine with states REQUESTED, IMPACT_ANALYZED, APPROVED, MONITOR_MODE, VALIDATED, ENFORCED, CERTIFIED, REVIEW_DUE, EXPIRED, ROLLED_BACK | RuleLifecycleManager -- `transitionState()`, `getState()`, `getHistory()` | `src/vro/actions/lifecycle/RuleLifecycleManager.js` | TC-068 | `transitionState(ruleId, newState)` validates transition legality against the state machine; illegal transitions throw DFW-10001; each transition is recorded in the rule audit trail with timestamp, actor, and justification |
+| FR-069 | Rule Registry provides a custom ServiceNow table (`x_dfw_rule_registry`) with unique rule IDs in format DFW-R-XXXX, full audit trail, and CRUD operations | RuleRegistry -- `registerRule()`, `getRule()`, `updateRule()`, `searchRules()` | `src/vro/actions/lifecycle/RuleRegistry.js` | TC-069 | `registerRule(ruleDefinition)` creates a new entry with auto-generated ID matching pattern `DFW-R-[0-9]{4}`; `getRule(ruleId)` returns the full rule record including audit history; duplicate rule detection prevents conflicting registrations |
+| FR-070 | Migration-event-driven bulk tagging processes Greenzone VM migration manifests in waves, applying tags based on manifest definitions with pre-validation and post-migration verification | MigrationBulkTagger -- `loadManifest()`, `preValidate()`, `executeWave()`, `verifyPostMigration()`, `generateWaveReport()` | `src/vro/actions/lifecycle/MigrationBulkTagger.js` | TC-070 | `loadManifest(manifestPath)` parses a wave-based migration manifest; `preValidate(wave)` validates all VM entries against the tag dictionary and CMDB; `executeWave(waveId)` applies tags to all VMs in the wave with progress tracking; `verifyPostMigration(waveId)` confirms tag persistence after migration |
+| FR-071 | Periodic rule review runs scheduled scans against rule expiry dates, sends owner notifications at configurable intervals, escalates unreviewed rules, and auto-expires rules past their certification deadline | RuleReviewScheduler -- `scanForReviewDue()`, `notifyOwners()`, `escalateOverdue()`, `autoExpire()` | `src/vro/actions/lifecycle/RuleReviewScheduler.js` | TC-071 | `scanForReviewDue()` identifies rules within the notification window (default: 30 days before expiry); `notifyOwners()` sends email and ServiceNow notifications to rule owners; `escalateOverdue()` creates escalation incidents for rules past their review deadline; `autoExpire()` transitions rules to EXPIRED state after the grace period |
+| FR-072 | CMDB-driven event synchronization triggers Day-2 tag sync when CMDB CI fields change on the `cmdb_ci_vm_instance` table through a business rule | cmdbTagSyncRule -- business rule on `cmdb_ci_vm_instance` | `src/servicenow/business-rules/cmdbTagSyncRule.js` | TC-072 | When a monitored field (environment, application, tier) changes on a `cmdb_ci_vm_instance` record, the business rule detects the change, assembles a Day-2 tag update payload, and triggers the vRO DFW-Day2-TagUpdate workflow via REST API; the tag sync is logged with correlation ID in the CI work notes |
+| FR-073 | VRA package deployment model provides a structured vRO package at `package/` for import into VMware Aria Automation, containing all actions, workflows, configuration elements, and resource elements | VRA package structure at `package/com.dfw.automation/` | `package/com.dfw.automation/` | TC-073 | The `package/com.dfw.automation/` directory contains a complete vRO package structure with `actions/`, `workflows/`, `config-elements/`, and `resource-elements/` subdirectories; the package can be imported into Aria Automation Orchestrator via the package import wizard or `vro-cli package import` |
+
+### Design Notes -- CMDB Validation and Rule Lifecycle
+
+**CMDBValidator** operates as a scheduled validation engine that runs against the ServiceNow CMDB to ensure all managed VMs have complete 5-tag coverage. The validator extracts the full VM inventory for a given site, cross-references each VM against the mandatory tag taxonomy, and produces a structured gap report. Each gap is categorized by severity (critical for missing mandatory tags, warning for missing optional tags) and generates a remediation task in ServiceNow for follow-up.
+
+**RuleLifecycleManager** implements a formal state machine governing the lifecycle of every DFW rule from initial request through enforcement to periodic review and eventual expiry. The state machine enforces transition rules -- for example, a rule cannot move from REQUESTED directly to ENFORCED without passing through IMPACT_ANALYZED and APPROVED. Each state transition is recorded in the audit trail with the actor identity, timestamp, and justification, providing complete traceability for compliance audits.
+
+**RuleRegistry** provides the persistence layer for rule tracking through the `x_dfw_rule_registry` custom table in ServiceNow. Each rule receives a unique identifier (DFW-R-XXXX format) and carries metadata including owner, creation date, last review date, expiry date, associated DFW policy references, and the complete state transition history.
+
+**MigrationBulkTagger** supports large-scale VM migration events (Greenzone migration waves) where hundreds of VMs need consistent tag application during migration from legacy infrastructure. The module processes wave-based manifests, validates each VM against the tag dictionary and CMDB before tagging, executes tag application with progress tracking, and verifies tag persistence after migration completes.
+
+**RuleReviewScheduler** enforces periodic rule certification by scanning the rule registry for rules approaching their review deadline. The scheduler sends notifications to rule owners, escalates overdue reviews through ServiceNow incident management, and automatically expires rules that are not re-certified within the configured grace period.
+
+**cmdbTagSyncRule** is a ServiceNow business rule that fires on updates to `cmdb_ci_vm_instance` records. When monitored CMDB fields change, the rule assembles a Day-2 tag update payload and triggers the vRO workflow to synchronize NSX tags with the updated CMDB data, ensuring CMDB remains the authoritative source for tag values.
+
+---
+
+## 12. Cross-Cutting Traceability Summary (Extended)
+
+| Functional Area | FR Range | Primary Components | Key NFRs Addressed | Test Cases |
+|----------------|----------|-------------------|---------------------|------------|
+| ServiceNow Catalog Form | FR-001 -- FR-010 | `vmBuildRequest_onLoad.js`, `vmBuildRequest_onChange.js`, `catalogItemValidation.js` | NFR-018 (Input validation), NFR-019 (Conflict detection) | TC-001 -- TC-006 |
+| Tag Cardinality and Operations | FR-011 -- FR-020 | TagCardinalityEnforcer, TagOperations | NFR-005 (10K+ VMs), NFR-006 (50+ values), NFR-014 (Idempotency) | TC-007 -- TC-017 |
+| Pipeline Orchestration | FR-021 -- FR-030 | CorrelationContext, ConfigLoader, LifecycleOrchestrator, Day0/Day2/DayN | NFR-002 (E2E under 5 min), NFR-009 (No SPOF), NFR-016 (Correlation ID) | TC-018 -- TC-022, TC-045, TC-046 |
+| DFW Policy Validation | FR-031 -- FR-040 | DFWPolicyValidator, RuleConflictDetector | NFR-003 (Tag propagation 120s), NFR-022 (Compliance references), NFR-024 (BRD traceability) | TC-023 -- TC-028, TC-050 |
+| Error Handling and Resilience | FR-041 -- FR-050 | ErrorFactory, RetryHandler, CircuitBreaker, SagaCoordinator | NFR-010 (Graceful degradation), NFR-011 (Auto recovery), NFR-028 (Error taxonomy) | TC-029 -- TC-040 |
+| Logging and Observability | FR-051 -- FR-060 | Logger, CorrelationContext, DeadLetterQueue | NFR-020 (RITM audit), NFR-021 (7-year retention), NFR-032 (Structured logging) | TC-041 -- TC-044 |
+| Policy-as-Code | FR-061 -- FR-065 | YAML policies, PayloadValidator, CI pipeline | NFR-023 (Peer review), NFR-046 (JSON Schema), NFR-047 (YAML validation) | TC-048, TC-049 |
+| CMDB Validation and Rule Lifecycle | FR-066 -- FR-073 | CMDBValidator, RuleLifecycleManager, RuleRegistry, RuleReviewScheduler, MigrationBulkTagger, cmdbTagSyncRule | NFR-020 (Audit), NFR-022 (Compliance), NFR-024 (Traceability) | TC-066 -- TC-073 |
+
+### Requirement Coverage Statistics (Updated)
+
+| Metric | Count |
+|--------|-------|
+| Total Functional Requirements | 73 |
+| Requirements with identified design component | 73 (100%) |
+| Requirements with source file reference | 73 (100%) |
+| Requirements with test case reference | 73 (100%) |
+| Requirements with acceptance criteria | 73 (100%) |
+| Unique test cases referenced | 58 |
+| Unique source files referenced | 24 |
+
+---
+
 *End of Functional Requirements Design*

@@ -356,4 +356,183 @@ The following table lists the pipeline modules, their responsibilities, and key 
 
 ---
 
+## 10. CMDBValidator Design Pattern
+
+### 10.1 Overview
+
+The CMDBValidator implements a scheduled validation engine pattern that operates against the ServiceNow CMDB to ensure all managed VMs maintain complete 5-tag coverage. The module runs on a configurable schedule (default: daily) and produces structured gap reports with actionable remediation tasks.
+
+### 10.2 Validation Pipeline
+
+The CMDBValidator follows a three-stage validation pipeline:
+
+1. **Extraction**: `extractVMInventory(site)` queries the ServiceNow CMDB for all `cmdb_ci_vm_instance` records at the specified site with `operational_status=1`. The query joins against the NSX fabric inventory to correlate CMDB CIs with NSX VM external IDs.
+
+2. **Coverage Validation**: `validateCoverage(inventory)` checks each VM against the 5-tag mandatory taxonomy (Region, SecurityZone, Environment, AppCI, SystemRole). VMs missing any mandatory tag are flagged as non-compliant with specific gap details.
+
+3. **Quality Validation**: `validateQuality(inventory)` performs deeper validation including tag value consistency (e.g., Region tag matches the VM's physical site), CMDB field alignment (e.g., AppCI tag matches the CMDB application CI reference), and staleness detection (tags not updated within the configured threshold).
+
+### 10.3 Gap Report Generation
+
+`generateGapReport(site)` orchestrates the full pipeline and produces a structured report containing:
+- **KPI Metrics**: Coverage percentage, quality score, trend comparison against previous scan
+- **Gap Inventory**: Per-VM list of missing or invalid tags
+- **Remediation Tasks**: Automatically created ServiceNow tasks assigned to the VM owner or assignment group
+- **Summary Statistics**: Total VMs scanned, compliant count, non-compliant count, breakdown by gap type
+
+### 10.4 Design Decisions
+
+- The validator is read-only with respect to NSX -- it does not apply corrective tags. Remediation is handled through the standard tag update pipeline to maintain audit trail integrity.
+- Gap reports are stored as ServiceNow report records for historical trending and compliance dashboard consumption.
+- The extraction phase uses pagination to handle large inventories (10,000+ VMs) without exceeding ServiceNow query limits.
+
+---
+
+## 11. RuleLifecycleManager State Machine Design
+
+### 11.1 Overview
+
+The RuleLifecycleManager implements a formal finite state machine governing the lifecycle of every DFW rule from initial request through enforcement to periodic review and eventual retirement. The state machine enforces legal transition paths, preventing unauthorized state changes and ensuring every rule passes through required governance checkpoints.
+
+### 11.2 State Definitions
+
+| State | Description | Entry Criteria | Exit Criteria |
+|-------|-------------|---------------|---------------|
+| REQUESTED | Initial state when a rule is submitted through the Rule Request Pipeline | Rule request submitted via catalog, onboarding, emergency, or audit channel | Impact analysis completed |
+| IMPACT_ANALYZED | Impact analysis has been performed showing affected VMs, groups, and policies | Impact analysis report generated and attached to rule record | Approver reviews and approves/rejects |
+| APPROVED | Rule has been approved by the designated authority | Approval workflow completed with all required sign-offs | Rule deployed in monitor mode |
+| MONITOR_MODE | Rule is deployed in NSX with action=ALLOW/LOG (no enforcement) for validation period | Rule applied to NSX in monitoring configuration | Validation period elapsed with no incidents |
+| VALIDATED | Monitoring period completed with no adverse effects observed | Traffic analysis confirms expected behavior during monitoring | Rule promoted to enforcement |
+| ENFORCED | Rule is actively enforced on the NSX data plane | Rule action changed from monitor to enforce | Certification period reached or expiry triggered |
+| CERTIFIED | Rule has been reviewed and re-certified by the rule owner | Rule owner completed periodic review attestation | Next review cycle begins |
+| REVIEW_DUE | Rule's certification period is approaching expiry | Scheduled scan detected rule within notification window | Owner re-certifies or rule expires |
+| EXPIRED | Rule has not been re-certified within the grace period and is disabled | Auto-expiry triggered after grace period elapsed | Rule is removed or re-certified |
+| ROLLED_BACK | Rule has been rolled back due to an incident or failed validation | Emergency rollback or validation failure detected | Rule is re-submitted or permanently retired |
+
+### 11.3 Transition Rules
+
+| From State | To State | Trigger | Required Actor |
+|-----------|----------|---------|----------------|
+| REQUESTED | IMPACT_ANALYZED | `analyzeImpact(ruleId)` completes | System (automated) |
+| IMPACT_ANALYZED | APPROVED | `approveRule(ruleId, approverId)` | Security Architect or designated approver |
+| IMPACT_ANALYZED | ROLLED_BACK | `rejectRule(ruleId, reason)` | Approver |
+| APPROVED | MONITOR_MODE | `deployMonitor(ruleId)` | System (automated) |
+| MONITOR_MODE | VALIDATED | `validateRule(ruleId)` after monitoring period | System (automated) |
+| MONITOR_MODE | ROLLED_BACK | `rollbackRule(ruleId, reason)` | Operator or system |
+| VALIDATED | ENFORCED | `enforceRule(ruleId)` | System (automated) |
+| ENFORCED | CERTIFIED | `certifyRule(ruleId, ownerId)` | Rule owner |
+| ENFORCED | REVIEW_DUE | Scheduled scan detects approaching expiry | System (automated) |
+| ENFORCED | ROLLED_BACK | `rollbackRule(ruleId, reason)` | Operator or system |
+| CERTIFIED | ENFORCED | Certification recorded, returns to enforced | System (automated) |
+| REVIEW_DUE | CERTIFIED | `certifyRule(ruleId, ownerId)` | Rule owner |
+| REVIEW_DUE | EXPIRED | Grace period elapsed without certification | System (automated) |
+| EXPIRED | REQUESTED | `resubmitRule(ruleId)` | Rule owner |
+| ROLLED_BACK | REQUESTED | `resubmitRule(ruleId)` | Rule owner |
+
+### 11.4 Design Decisions
+
+- Transition enforcement is implemented as a whitelist: only explicitly defined transitions are permitted. Any attempt to transition to a state not in the whitelist for the current state throws DFW-10001.
+- Every state transition writes an immutable audit record to the rule's history, including timestamp, actor identity, source state, target state, and justification text.
+- The MONITOR_MODE state uses NSX DFW rule action=ALLOW with logging enabled, providing traffic visibility without enforcement risk. This allows teams to validate rule behavior against real traffic before committing to enforcement.
+- The ROLLED_BACK state preserves the full rule configuration for forensic analysis and enables re-submission without re-entering all rule details.
+
+---
+
+## 12. 5-Tag Taxonomy Architectural Decision
+
+### 12.1 Decision Context
+
+The original pipeline used a 6-tag model (Application, Tier, Environment, DataClassification, Compliance, CostCenter) aligned with general-purpose workload classification. Client security architecture review identified the need for a taxonomy that directly maps to NSX DFW policy constructs and aligns with the client's network security zone model.
+
+### 12.2 Decision
+
+Adopt a 5-tag mandatory model (Region, SecurityZone, Environment, AppCI, SystemRole) with 3 optional tags (Compliance, DataClassification, CostCenter). This model:
+
+- **Region** replaces implicit site-based routing with an explicit geographic tag, enabling cross-site policy decisions based on VM location.
+- **SecurityZone** introduces a network security zone dimension (DMZ, Internal, Restricted, Management) that maps directly to NSX security group membership criteria for zone-based isolation policies.
+- **Environment** is retained as the deployment lifecycle stage indicator.
+- **AppCI** replaces the generic Application tag with a direct CMDB CI reference, enabling automated CMDB-to-NSX synchronization.
+- **SystemRole** replaces the Tier tag with a broader workload function indicator that supports infrastructure roles (DNS, NTP, Monitoring) in addition to application tiers.
+
+### 12.3 NSX Scope Mapping
+
+Each mandatory tag maps to an NSX scope (tag category) with a 1:1 relationship:
+
+| Tag | NSX Scope | Security Group Pattern | DFW Policy Usage |
+|-----|-----------|----------------------|-----------------|
+| Region | Region | SG-Region-{value} | Cross-site isolation rules |
+| SecurityZone | SecurityZone | SG-Zone-{value} | Zone-based access control |
+| Environment | Environment | SG-Env-{value} | Environment isolation rules |
+| AppCI | AppCI | SG-App-{value} | Application micro-segmentation |
+| SystemRole | SystemRole | SG-Role-{value} | Role-based access control |
+
+### 12.4 Tradeoffs
+
+- The mandatory 5-tag model increases the minimum tagging burden per VM from 4 tags (Application, Tier, Environment, DataClassification) to 5, but provides richer policy granularity.
+- The optional Compliance and DataClassification tags remain available for organizations that require regulatory framework tagging.
+- Backward compatibility with the original 6-tag model is maintained through a migration mapping in the CMDBValidator that translates legacy tags to the new taxonomy.
+
+---
+
+## 13. VRA Packaging Model
+
+### 13.1 Overview
+
+The VRA packaging model provides a standardized directory structure at `package/` for importing the complete DFW automation pipeline into VMware Aria Automation Orchestrator. The package follows the vRO package specification and contains all actions, workflows, configuration elements, and resource elements needed for a complete deployment.
+
+### 13.2 Package Structure
+
+```
+package/
+  com.dfw.automation/
+    actions/
+      shared/           # Cross-cutting utility actions
+      tags/             # Tag management actions
+      groups/           # Group management actions
+      dfw/              # DFW policy actions
+      lifecycle/        # Lifecycle orchestrator actions
+      cmdb/             # CMDB validation actions
+    workflows/
+      DFW-Day0-Provision.xml
+      DFW-Day2-TagUpdate.xml
+      DFW-DayN-Decommission.xml
+      DFW-CMDBValidation.xml
+      DFW-RuleLifecycle.xml
+      DFW-RuleReview.xml
+      DFW-MigrationBulkTag.xml
+    config-elements/
+      DFW-Pipeline-Config.xml
+    resource-elements/
+      schemas/
+      policies/
+  scripts/
+    import-package.sh
+    export-package.sh
+  servicenow/
+    tables/
+    business-rules/
+    catalog-items/
+    client-scripts/
+    server-scripts/
+    scheduled-jobs/
+    ui-policies/
+    scripted-rest-apis/
+```
+
+### 13.3 Deployment Flow
+
+The VRA package is deployed through a two-phase process:
+
+1. **vRO Import**: The `package/com.dfw.automation/` directory is imported into Aria Automation Orchestrator using the package import wizard or `vro-cli package import`. This installs all actions, workflows, and configuration elements in a single operation.
+
+2. **ServiceNow Deployment**: The `package/servicenow/` directory contains update set XML files and deployment scripts for the ServiceNow components (tables, business rules, catalog items, client scripts, server scripts, scheduled jobs, UI policies, and scripted REST APIs).
+
+### 13.4 Design Decisions
+
+- The package uses a flat action structure (one file per action) rather than bundled archives to enable selective updates without full package redeployment.
+- Configuration elements use vault references for all credentials, ensuring no secrets are embedded in the package.
+- The `scripts/import-package.sh` script provides an automated import path for CI/CD pipeline integration.
+
+---
+
 *End of Solution Design Document*
