@@ -17,8 +17,8 @@ describe('UntaggedVMScanner', () => {
       },
       tagOperations: {
         getTags: jest.fn()
-          .mockResolvedValueOnce({ Application: 'APP001', Tier: 'Web', Environment: 'Production' })
-          .mockResolvedValueOnce({ Application: 'APP002' })
+          .mockResolvedValueOnce({ Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' })
+          .mockResolvedValueOnce({ AppCI: 'APP002' })
           .mockResolvedValueOnce({})
       },
       logger: {
@@ -65,18 +65,18 @@ describe('UntaggedVMScanner', () => {
 
     const partialVM = report.untaggedVMs.find(vm => vm.vmId === 'vm-2');
     expect(partialVM).toBeDefined();
-    expect(partialVM.missingCategories).toContain('Tier');
+    expect(partialVM.missingCategories).toContain('SystemRole');
     expect(partialVM.missingCategories).toContain('Environment');
     expect(partialVM.suggestions.length).toBeGreaterThan(0);
   });
 
   // Name pattern matching
-  test('suggests Tier based on VM name patterns', () => {
+  test('suggests SystemRole based on VM name patterns', () => {
     const suggestions = scanner.suggestClassification('NDCNG-APP001-WEB-P01', {});
 
-    const tierSuggestion = suggestions.find(s => s.category === 'Tier');
-    expect(tierSuggestion).toBeDefined();
-    expect(tierSuggestion.suggestedValue).toBe('Web');
+    const roleSuggestion = suggestions.find(s => s.category === 'SystemRole');
+    expect(roleSuggestion).toBeDefined();
+    expect(roleSuggestion.suggestedValue).toBe('Web');
   });
 
   test('suggests Environment based on VM name patterns', () => {
@@ -87,10 +87,10 @@ describe('UntaggedVMScanner', () => {
     expect(envSuggestion.suggestedValue).toBe('Production');
   });
 
-  test('extracts Application code from VM name', () => {
+  test('extracts AppCI code from VM name', () => {
     const suggestions = scanner.suggestClassification('NDCNG-APP001-WEB-P01', {});
 
-    const appSuggestion = suggestions.find(s => s.category === 'Application');
+    const appSuggestion = suggestions.find(s => s.category === 'AppCI');
     expect(appSuggestion).toBeDefined();
     expect(appSuggestion.suggestedValue).toBe('APP001');
   });
@@ -116,7 +116,7 @@ describe('UntaggedVMScanner', () => {
   // Tag retrieval failure
   test('handles tag retrieval failure for individual VM', async () => {
     deps.tagOperations.getTags = jest.fn()
-      .mockResolvedValueOnce({ Application: 'APP001', Tier: 'Web', Environment: 'Production' })
+      .mockResolvedValueOnce({ Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' })
       .mockRejectedValueOnce(new Error('NSX error'))
       .mockResolvedValueOnce({});
 

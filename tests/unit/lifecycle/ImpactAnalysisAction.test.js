@@ -10,9 +10,11 @@ describe('ImpactAnalysisAction', () => {
     deps = {
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Development',
+          AppCI: 'APP001',
+          SystemRole: 'Web',
           Compliance: ['None'],
           DataClassification: 'Internal'
         })
@@ -116,9 +118,11 @@ describe('ImpactAnalysisAction', () => {
 
   test('assigns LOW risk for non-impactful changes', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'APP001',
-      Tier: 'Web',
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
       Environment: 'Development',
+      AppCI: 'APP001',
+      SystemRole: 'Web',
       Compliance: ['None'],
       DataClassification: 'Internal'
     });
@@ -132,7 +136,7 @@ describe('ImpactAnalysisAction', () => {
     const result = await action.analyze({
       vmId: 'vm-123',
       site: 'NDCNG',
-      proposedTags: { Application: 'APP002' }
+      proposedTags: { AppCI: 'APP002' }
     });
 
     expect(result.riskLevel).toBe('LOW');
@@ -142,8 +146,8 @@ describe('ImpactAnalysisAction', () => {
   // Tag delta computation
   test('correctly identifies added, changed, and unchanged tags', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'APP001',
-      Tier: 'Web'
+      AppCI: 'APP001',
+      SystemRole: 'Web'
     });
     deps.groupVerifier.predictGroupChanges.mockReturnValue({
       vmId: 'vm-123',
@@ -155,11 +159,11 @@ describe('ImpactAnalysisAction', () => {
     const result = await action.analyze({
       vmId: 'vm-123',
       site: 'NDCNG',
-      proposedTags: { Application: 'APP001', Tier: 'App', Environment: 'Production' }
+      proposedTags: { AppCI: 'APP001', SystemRole: 'App', Environment: 'Production' }
     });
 
-    expect(result.tagDelta.unchanged).toHaveProperty('Application');
-    expect(result.tagDelta.changed).toHaveProperty('Tier');
+    expect(result.tagDelta.unchanged).toHaveProperty('AppCI');
+    expect(result.tagDelta.changed).toHaveProperty('SystemRole');
     expect(result.tagDelta.added).toHaveProperty('Environment');
   });
 
@@ -170,7 +174,7 @@ describe('ImpactAnalysisAction', () => {
     await expect(action.analyze({
       vmId: 'vm-123',
       site: 'NDCNG',
-      proposedTags: { Tier: 'App' }
+      proposedTags: { SystemRole: 'App' }
     })).rejects.toThrow('NSX API unreachable');
 
     expect(deps.logger.error).toHaveBeenCalled();
@@ -189,7 +193,7 @@ describe('ImpactAnalysisAction', () => {
     const result = await action.analyze({
       vmId: 'vm-123',
       site: 'NDCNG',
-      proposedTags: { Tier: 'Web' }
+      proposedTags: { SystemRole: 'Web' }
     });
 
     expect(result.affectedDFWRules).toEqual([]);
@@ -207,7 +211,7 @@ describe('ImpactAnalysisAction', () => {
     const result = await action.analyze({
       vmId: 'vm-123',
       site: 'NDCNG',
-      proposedTags: { Application: 'APP002' }
+      proposedTags: { AppCI: 'APP002' }
     });
 
     expect(result.affectedDFWRules).toEqual([]);

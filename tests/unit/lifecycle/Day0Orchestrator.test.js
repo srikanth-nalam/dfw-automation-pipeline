@@ -99,9 +99,11 @@ describe('Day0Orchestrator', () => {
     },
     site: 'NDCNG',
     tags: {
-      Application: 'APP001',
-      Tier: 'Web',
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
       Environment: 'Production',
+      AppCI: 'APP001',
+      SystemRole: 'Web',
       Compliance: ['PCI'],
       DataClassification: 'Confidential',
       CostCenter: 'CC-IT-INFRA-001'
@@ -319,7 +321,7 @@ describe('Day0Orchestrator', () => {
   // Sub-step: applyTags
   // ---------------------------------------------------------------------------
   test('applyTags delegates to tagOperations', async () => {
-    const tags = { Application: 'APP001', Tier: 'Web' };
+    const tags = { AppCI: 'APP001', SystemRole: 'Web' };
     const result = await orchestrator.applyTags('vm-123', tags, 'NDCNG');
 
     expect(result.vmId).toBe('vm-123');

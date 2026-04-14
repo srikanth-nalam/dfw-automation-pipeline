@@ -241,7 +241,7 @@ describe('DFWPolicyValidator', () => {
       const groupResponse = {
         body: {
           expression: [
-            { member_type: 'VirtualMachine', value: 'tag|scope=Application|APP001' }
+            { member_type: 'VirtualMachine', value: 'tag|scope=AppCI|APP001' }
           ]
         }
       };
@@ -275,7 +275,7 @@ describe('DFWPolicyValidator', () => {
       const groupResponse = {
         body: {
           expression: [
-            { member_type: 'VirtualMachine', value: 'tag|scope=Application|APP001' }
+            { member_type: 'VirtualMachine', value: 'tag|scope=AppCI|APP001' }
           ]
         }
       };

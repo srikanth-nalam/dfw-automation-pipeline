@@ -12,9 +12,11 @@ const nsxApiMock = {
   // ---------------------------------------------------------------------------
   getVmTags: (vmId) => ({
     results: [
-      { tag: 'APP001', scope: 'Application' },
-      { tag: 'Web', scope: 'Tier' },
+      { tag: 'NDCNG', scope: 'Region' },
+      { tag: 'Greenzone', scope: 'SecurityZone' },
       { tag: 'Production', scope: 'Environment' },
+      { tag: 'APP001', scope: 'AppCI' },
+      { tag: 'Web', scope: 'SystemRole' },
       { tag: 'PCI', scope: 'Compliance' },
       { tag: 'Confidential', scope: 'DataClassification' },
       { tag: 'CC-IT-INFRA-001', scope: 'CostCenter' }
@@ -38,7 +40,7 @@ const nsxApiMock = {
       { display_name: 'All-Production-VMs', id: 'group-2' },
       { display_name: 'All-PCI-VMs', id: 'group-3' },
       { display_name: 'All-Confidential-Data-VMs', id: 'group-4' },
-      { display_name: 'All-Web-Tier-VMs', id: 'group-5' }
+      { display_name: 'All-Web-SystemRole-VMs', id: 'group-5' }
     ]
   }),
 

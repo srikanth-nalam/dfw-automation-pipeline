@@ -235,19 +235,19 @@ describe('GroupMembershipVerifier', () => {
       },
       {
         groupName: 'APP001_Web_Production',
-        criteria: { Application: 'APP001', Tier: 'Web', Environment: 'Production' }
+        criteria: { AppCI: 'APP001', SystemRole: 'Web', Environment: 'Production' }
       }
     ];
 
     it('predicts joining groups when moving from Staging to Production', () => {
       const currentTags = {
-        Application: 'APP001',
-        Tier: 'Web',
+        AppCI: 'APP001',
+        SystemRole: 'Web',
         Environment: 'Staging'
       };
       const newTags = {
-        Application: 'APP001',
-        Tier: 'Web',
+        AppCI: 'APP001',
+        SystemRole: 'Web',
         Environment: 'Production'
       };
 
@@ -260,12 +260,12 @@ describe('GroupMembershipVerifier', () => {
 
     it('predicts leaving PCI group when compliance is removed', () => {
       const currentTags = {
-        Application: 'APP001',
+        AppCI: 'APP001',
         Compliance: ['PCI'],
         Environment: 'Production'
       };
       const newTags = {
-        Application: 'APP001',
+        AppCI: 'APP001',
         Compliance: ['None'],
         Environment: 'Production'
       };
@@ -275,8 +275,8 @@ describe('GroupMembershipVerifier', () => {
     });
 
     it('returns empty arrays when no group changes are predicted', () => {
-      const currentTags = { Application: 'APP001', Environment: 'Production' };
-      const newTags = { Application: 'APP001', Environment: 'Production' };
+      const currentTags = { AppCI: 'APP001', Environment: 'Production' };
+      const newTags = { AppCI: 'APP001', Environment: 'Production' };
 
       const prediction = verifier.predictGroupChanges(currentTags, newTags, groupMappings);
       expect(prediction.toJoin).toEqual([]);

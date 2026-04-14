@@ -158,9 +158,11 @@ describe('EndToEndPipeline - Day0 Flow', () => {
     },
     site: 'NDCNG',
     tags: {
-      Application: 'APP001',
-      Tier: 'Web',
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
       Environment: 'Production',
+      AppCI: 'APP001',
+      SystemRole: 'Web',
       Compliance: ['PCI'],
       DataClassification: 'Confidential'
     },

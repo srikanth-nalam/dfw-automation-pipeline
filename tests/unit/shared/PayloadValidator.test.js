@@ -16,9 +16,11 @@ describe('PayloadValidator', () => {
       vmName: 'test-vm-001',
       callbackUrl: 'https://snow.company.internal/api/callback',
       tags: {
-        Tier: 'Web',
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
         Environment: 'Production',
-        Application: 'MyApp',
+        AppCI: 'MyApp',
+        SystemRole: 'Web',
         Compliance: ['PCI'],
         DataClassification: 'Confidential'
       }
@@ -54,9 +56,11 @@ describe('PayloadValidator', () => {
     test('should pass validation with valid tag structure', () => {
       const payload = buildValidPayload({
         tags: {
-          Tier: 'Application',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Development',
-          Application: 'TestApp',
+          AppCI: 'TestApp',
+          SystemRole: 'Application',
           Compliance: ['None'],
           DataClassification: 'Internal'
         }
@@ -144,9 +148,9 @@ describe('PayloadValidator', () => {
       expect(result.valid).toBe(false);
     });
 
-    test('should fail when Tier tag is missing', () => {
+    test('should fail when SystemRole tag is missing', () => {
       const payload = buildValidPayload();
-      delete payload.tags.Tier;
+      delete payload.tags.SystemRole;
       const result = validator.validate(payload);
       expect(result.valid).toBe(false);
     });
@@ -163,9 +167,11 @@ describe('PayloadValidator', () => {
     test('should fail with DFW-4003 for PCI + Sandbox combination', () => {
       const payload = buildValidPayload({
         tags: {
-          Tier: 'Web',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Sandbox',
-          Application: 'MyApp',
+          AppCI: 'MyApp',
+          SystemRole: 'Web',
           Compliance: ['PCI'],
           DataClassification: 'Internal'
         }
@@ -178,9 +184,11 @@ describe('PayloadValidator', () => {
     test('should allow PCI in non-Sandbox environments', () => {
       const payload = buildValidPayload({
         tags: {
-          Tier: 'Web',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Production',
-          Application: 'MyApp',
+          AppCI: 'MyApp',
+          SystemRole: 'Web',
           Compliance: ['PCI'],
           DataClassification: 'Confidential'
         }
@@ -192,9 +200,11 @@ describe('PayloadValidator', () => {
     test('should allow Sandbox with non-PCI compliance', () => {
       const payload = buildValidPayload({
         tags: {
-          Tier: 'Web',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Sandbox',
-          Application: 'MyApp',
+          AppCI: 'MyApp',
+          SystemRole: 'Web',
           Compliance: ['None'],
           DataClassification: 'Public'
         }
@@ -205,10 +215,10 @@ describe('PayloadValidator', () => {
   });
 
   describe('duplicate single-value categories', () => {
-    test('should fail with DFW-4006 for duplicate single-value tag categories', () => {
+    test('should fail with DFW-4006 for duplicate single-value SystemRole values', () => {
       const payload = buildValidPayload();
       // Simulate a payload where a single-value category has multiple values
-      payload.tags.Tier = ['Web', 'App'];
+      payload.tags.SystemRole = ['Web', 'App'];
       const result = validator.validate(payload);
       expect(result.valid).toBe(false);
       expect(result.errors.some(e => e.code === 'DFW-4006')).toBe(true);
@@ -257,7 +267,7 @@ describe('PayloadValidator', () => {
         vmId: 'vm-456',
         vmName: 'test-vm-001',
         tags: {
-          Tier: 'Web',
+          SystemRole: 'Web',
           Environment: 'Production'
         }
       };
@@ -342,7 +352,7 @@ describe('PayloadValidator', () => {
         requestType: 'day2_tag_update',
         site: 'NDCNG',
         vmName: 'test-vm-001',
-        tags: { Tier: 'Application' },
+        tags: { SystemRole: 'Application' },
         callbackUrl: 'https://snow.company.internal/api/callback'
       };
       const result = validator.validate(payload);
@@ -351,7 +361,7 @@ describe('PayloadValidator', () => {
 
     test('day0_provision still requires all 5 mandatory tag fields', () => {
       const payload = buildValidPayload({
-        tags: { Tier: 'Web' }
+        tags: { SystemRole: 'Web' }
       });
       const result = validator.validate(payload);
       expect(result.valid).toBe(false);
@@ -364,7 +374,7 @@ describe('PayloadValidator', () => {
         site: 'NDCNG',
         vmId: 'vm-999',
         vmName: 'test-vm-001',
-        tags: { Environment: 'Production', Tier: 'Web' }
+        tags: { Environment: 'Production', SystemRole: 'Web' }
       };
       const result = validator.validate(payload);
       expect(result.valid).toBe(true);

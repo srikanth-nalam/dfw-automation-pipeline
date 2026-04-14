@@ -53,9 +53,11 @@ describe('Day2Orchestrator', () => {
       },
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web',
           Compliance: ['PCI']
         }),
         updateTags: jest.fn().mockResolvedValue({ updated: true }),
@@ -97,15 +99,19 @@ describe('Day2Orchestrator', () => {
     vmName: 'NDCNG-APP001-WEB-P01',
     site: 'NDCNG',
     tags: {
-      Application: 'APP002',
-      Tier: 'Web',
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
       Environment: 'Production',
+      AppCI: 'APP002',
+      SystemRole: 'Web',
       Compliance: ['HIPAA']
     },
     expectedCurrentTags: {
-      Application: 'APP001',
-      Tier: 'Web',
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
       Environment: 'Production',
+      AppCI: 'APP001',
+      SystemRole: 'Web',
       Compliance: ['PCI']
     },
     callbackUrl: 'https://snow.test/callback',
@@ -157,9 +163,11 @@ describe('Day2Orchestrator', () => {
 
       expect(result.execution).toBeDefined();
       expect(result.execution.previousTags).toEqual({
-        Application: 'APP001',
-        Tier: 'Web',
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
         Environment: 'Production',
+        AppCI: 'APP001',
+        SystemRole: 'Web',
         Compliance: ['PCI']
       });
       expect(result.execution.desiredTags).toEqual(validPayload.tags);
@@ -202,7 +210,7 @@ describe('Day2Orchestrator', () => {
       expect(result.execution.impactAnalysis.unchangedGroups).toEqual(['All-Production-VMs']);
 
       expect(deps.groupVerifier.predictGroupChanges).toHaveBeenCalledWith(
-        expect.objectContaining({ Application: 'APP001' }),
+        expect.objectContaining({ AppCI: 'APP001' }),
         validPayload.tags
       );
     });
@@ -215,9 +223,11 @@ describe('Day2Orchestrator', () => {
     test('warns when current tags do not match expected', async () => {
       // Return tags that differ from expectedCurrentTags
       deps.tagOperations.getTags.mockResolvedValue({
-        Application: 'APP_WRONG',
-        Tier: 'Web',
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
         Environment: 'Production',
+        AppCI: 'APP_WRONG',
+        SystemRole: 'Web',
         Compliance: ['PCI']
       });
 
@@ -237,9 +247,11 @@ describe('Day2Orchestrator', () => {
     test('no drift warning when actual tags match expected', async () => {
       // Return tags that exactly match expectedCurrentTags
       deps.tagOperations.getTags.mockResolvedValue({
-        Application: 'APP001',
-        Tier: 'Web',
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
         Environment: 'Production',
+        AppCI: 'APP001',
+        SystemRole: 'Web',
         Compliance: ['PCI']
       });
 
@@ -255,9 +267,9 @@ describe('Day2Orchestrator', () => {
     test('detects drift when CMDB has categories not on VM', async () => {
       // Return tags missing a category that expectedCurrentTags has
       deps.tagOperations.getTags.mockResolvedValue({
-        Application: 'APP001',
-        Tier: 'Web'
-        // Missing Environment and Compliance
+        AppCI: 'APP001',
+        SystemRole: 'Web'
+        // Missing Region, SecurityZone, Environment, and Compliance
       });
 
       await orchestrator.run(validPayload);
@@ -346,9 +358,11 @@ describe('Day2Orchestrator', () => {
       const tags = await orchestrator.getCurrentTags('vm-123', 'NDCNG');
 
       expect(tags).toEqual({
-        Application: 'APP001',
-        Tier: 'Web',
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
         Environment: 'Production',
+        AppCI: 'APP001',
+        SystemRole: 'Web',
         Compliance: ['PCI']
       });
       expect(deps.tagOperations.getTags).toHaveBeenCalledWith('vm-123', 'NDCNG');
@@ -360,8 +374,8 @@ describe('Day2Orchestrator', () => {
   // ---------------------------------------------------------------------------
   describe('runImpactAnalysis', () => {
     test('predicts group membership changes', async () => {
-      const currentTags = { Application: 'APP001', Tier: 'Web' };
-      const newTags = { Application: 'APP002', Tier: 'Web' };
+      const currentTags = { AppCI: 'APP001', SystemRole: 'Web' };
+      const newTags = { AppCI: 'APP002', SystemRole: 'Web' };
 
       const result = await orchestrator.runImpactAnalysis(currentTags, newTags);
 
@@ -380,7 +394,7 @@ describe('Day2Orchestrator', () => {
   // ---------------------------------------------------------------------------
   describe('applyTagDeltas', () => {
     test('applies tag updates via tagOperations', async () => {
-      const newTags = { Application: 'APP002' };
+      const newTags = { AppCI: 'APP002' };
       const result = await orchestrator.applyTagDeltas('vm-123', newTags, 'NDCNG');
 
       expect(result.vmId).toBe('vm-123');
