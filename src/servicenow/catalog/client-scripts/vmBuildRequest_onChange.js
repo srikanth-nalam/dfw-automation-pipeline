@@ -39,12 +39,13 @@ const DFW_4003 = 'DFW-4003';
  *
  * @constant {Object.<string, string[]>}
  */
-const DATA_CLASSIFICATION_BY_TIER = {
-    'Web':       ['Public', 'Internal'],
-    'App':       ['Internal', 'Confidential'],
-    'Database':  ['Confidential', 'Restricted'],
-    'Middleware': ['Internal', 'Confidential'],
-    'Utility':   ['Public', 'Internal']
+const DATA_CLASSIFICATION_BY_ROLE = {
+    'Web':            ['Public', 'Internal'],
+    'Application':    ['Internal', 'Confidential'],
+    'Database':       ['Confidential', 'Restricted'],
+    'Middleware':     ['Internal', 'Confidential'],
+    'Utility':        ['Public', 'Internal'],
+    'SharedServices': ['Internal', 'Confidential']
 };
 
 /**
@@ -86,8 +87,13 @@ function onChange(control, oldValue, newValue, isLoading) {
     const fieldName = control.toString();
 
     switch (fieldName) {
-        case 'tier':
-            _handleTierChange(newValue, oldValue);
+        case 'system_role':
+            _handleSystemRoleChange(newValue, oldValue);
+            break;
+        case 'region':
+        case 'security_zone':
+        case 'app_ci':
+            // No special onChange logic needed for these fields
             break;
         case 'environment':
             _handleEnvironmentChange(newValue, oldValue);
@@ -105,29 +111,29 @@ function onChange(control, oldValue, newValue, isLoading) {
 // ---------------------------------------------------------------------------
 
 /**
- * Handles changes to the Tier field.
+ * Handles changes to the SystemRole field.
  *
- * When Tier is set to "Database":
+ * When SystemRole is set to "Database":
  *   - Makes the Compliance field mandatory (databases require explicit
  *     compliance classification per security policy).
  *   - Displays an info message explaining why Compliance is now required.
  *
- * For all Tier values:
- *   - Filters DataClassification options to only those valid for the tier.
+ * For all SystemRole values:
+ *   - Filters DataClassification options to only those valid for the role.
  *   - Resets the DataClassification value if it is no longer in the allowed set.
  *
  * @private
- * @param {string} newTier - The newly selected Tier value.
- * @param {string} oldTier - The previous Tier value.
+ * @param {string} newRole - The newly selected SystemRole value.
+ * @param {string} oldRole - The previous SystemRole value.
  * @returns {void}
  */
-function _handleTierChange(newTier, oldTier) {
-    // --- Compliance mandatory logic for Database tier ---
-    if (newTier === 'Database') {
+function _handleSystemRoleChange(newRole, oldRole) {
+    // --- Compliance mandatory logic for Database system role ---
+    if (newRole === 'Database') {
         g_form.setMandatory('compliance', true);
         g_form.showFieldMsg(
             'compliance',
-            'Compliance framework is required for Database tier workloads. ' +
+            'Compliance framework is required for Database system role workloads. ' +
             'Please select the applicable compliance standard(s).',
             'info'
         );
@@ -136,21 +142,21 @@ function _handleTierChange(newTier, oldTier) {
         g_form.hideFieldMsg('compliance');
     }
 
-    // --- Filter DataClassification based on Tier ---
-    _filterDataClassificationByTier(newTier);
+    // --- Filter DataClassification based on SystemRole ---
+    _filterDataClassificationByRole(newRole);
 }
 
 /**
  * Filters the DataClassification dropdown to show only the options that are
- * valid for the selected Tier. If the currently selected DataClassification
+ * valid for the selected SystemRole. If the currently selected DataClassification
  * is not in the allowed list, it is cleared.
  *
  * @private
- * @param {string} tier - The currently selected Tier value.
+ * @param {string} role - The currently selected SystemRole value.
  * @returns {void}
  */
-function _filterDataClassificationByTier(tier) {
-    const allowedValues = DATA_CLASSIFICATION_BY_TIER[tier] || ALL_DATA_CLASSIFICATIONS;
+function _filterDataClassificationByRole(role) {
+    const allowedValues = DATA_CLASSIFICATION_BY_ROLE[role] || ALL_DATA_CLASSIFICATIONS;
     const currentValue = g_form.getValue('data_classification');
 
     // Remove all options first, then add back only the allowed ones
@@ -172,7 +178,7 @@ function _filterDataClassificationByTier(tier) {
         g_form.showFieldMsg(
             'data_classification',
             'Your previous Data Classification selection is not valid for the "' +
-            tier + '" tier. Please select a new value.',
+            role + '" system role. Please select a new value.',
             'warning'
         );
     }

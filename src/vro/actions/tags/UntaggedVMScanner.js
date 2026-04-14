@@ -14,7 +14,7 @@
  * @constant {string[]}
  * @private
  */
-const MANDATORY_TAGS = ['Application', 'Tier', 'Environment'];
+const MANDATORY_TAGS = ['Region', 'SecurityZone', 'Environment', 'AppCI', 'SystemRole'];
 
 /**
  * VM name pattern matchers for auto-classification.
@@ -22,13 +22,13 @@ const MANDATORY_TAGS = ['Application', 'Tier', 'Environment'];
  * @private
  */
 const NAME_PATTERNS = Object.freeze({
-  tier: [
+  systemRole: [
     { pattern: /[_\-]WEB[_\-\d]/i, value: 'Web' },
-    { pattern: /[_\-]APP[_\-\d]/i, value: 'App' },
-    { pattern: /[_\-]DB[_\-\d]/i,  value: 'DB' },
+    { pattern: /[_\-]APP[_\-\d]/i, value: 'Application' },
+    { pattern: /[_\-]DB[_\-\d]/i,  value: 'Database' },
     { pattern: /WEB/i,             value: 'Web' },
-    { pattern: /APP/i,             value: 'App' },
-    { pattern: /DB/i,              value: 'DB' }
+    { pattern: /APP/i,             value: 'Application' },
+    { pattern: /DB/i,              value: 'Database' }
   ],
   environment: [
     { pattern: /[_\-]P\d{2}$/i,       value: 'Production' },
@@ -38,7 +38,7 @@ const NAME_PATTERNS = Object.freeze({
     { pattern: /UAT/i,                value: 'UAT' },
     { pattern: /STG|STAGING/i,        value: 'Staging' }
   ],
-  application: [
+  appCI: [
     { pattern: /[A-Z]{3,6}\d{3}/,    extract: true }
   ]
 });
@@ -201,13 +201,13 @@ class UntaggedVMScanner {
     const suggestions = [];
     let matchCount = 0;
 
-    // Tier suggestion
-    if (!currentTags.Tier) {
-      const tierMatch = this._matchPattern(vmName, NAME_PATTERNS.tier);
-      if (tierMatch) {
+    // SystemRole suggestion
+    if (!currentTags.SystemRole) {
+      const roleMatch = this._matchPattern(vmName, NAME_PATTERNS.systemRole);
+      if (roleMatch) {
         suggestions.push({
-          category: 'Tier',
-          suggestedValue: tierMatch,
+          category: 'SystemRole',
+          suggestedValue: roleMatch,
           confidence: 'MEDIUM'
         });
         matchCount += 1;
@@ -227,12 +227,12 @@ class UntaggedVMScanner {
       }
     }
 
-    // Application suggestion from naming convention
-    if (!currentTags.Application) {
-      const appMatch = this._extractApplication(vmName);
+    // AppCI suggestion from naming convention
+    if (!currentTags.AppCI) {
+      const appMatch = this._extractAppCI(vmName);
       if (appMatch) {
         suggestions.push({
-          category: 'Application',
+          category: 'AppCI',
           suggestedValue: appMatch,
           confidence: 'LOW'
         });
@@ -311,13 +311,13 @@ class UntaggedVMScanner {
   }
 
   /**
-   * Extracts application code from VM name.
+   * Extracts AppCI code from VM name.
    *
    * @private
    * @param {string} vmName - VM name.
-   * @returns {string|null} Extracted application code or null.
+   * @returns {string|null} Extracted AppCI code or null.
    */
-  _extractApplication(vmName) {
+  _extractAppCI(vmName) {
     const match = vmName.match(/([A-Z]{3,6}\d{3})/);
     return match ? match[1] : null;
   }

@@ -4,9 +4,10 @@
  * NSX tags are organized by category (scope). Each category has a cardinality
  * constraint that determines how many values can coexist:
  *
- *  - **Single-value** categories (Application, Tier, Environment,
- *    DataClassification, CostCenter): only one tag value is permitted at a time.
- *    Assigning a new value automatically replaces any previous value.
+ *  - **Single-value** categories (Region, SecurityZone, Environment, AppCI,
+ *    SystemRole, DataClassification, CostCenter): only one tag value is
+ *    permitted at a time. Assigning a new value automatically replaces any
+ *    previous value.
  *
  *  - **Multi-value** categories (Compliance): multiple values may coexist
  *    (e.g. PCI + HIPAA). The special value "None" is mutually exclusive: if
@@ -28,9 +29,11 @@
  * @constant {Object.<string, {type: string}>}
  */
 const CATEGORY_CONFIG = Object.freeze({
-  Application: { type: 'single' },
-  Tier: { type: 'single' },
+  Region: { type: 'single' },
+  SecurityZone: { type: 'single' },
   Environment: { type: 'single' },
+  AppCI: { type: 'single' },
+  SystemRole: { type: 'single' },
   DataClassification: { type: 'single' },
   CostCenter: { type: 'single' },
   Compliance: { type: 'multi' }
@@ -120,10 +123,10 @@ class TagCardinalityEnforcer {
    * @example
    * const enforcer = new TagCardinalityEnforcer();
    * const merged = enforcer.enforceCardinality(
-   *   { Application: 'APP001', Compliance: ['PCI'] },
-   *   { Application: 'APP002', Compliance: ['HIPAA'] }
+   *   { AppCI: 'APP001', Compliance: ['PCI'] },
+   *   { AppCI: 'APP002', Compliance: ['HIPAA'] }
    * );
-   * // merged => { Application: 'APP002', Compliance: ['PCI', 'HIPAA'] }
+   * // merged => { AppCI: 'APP002', Compliance: ['PCI', 'HIPAA'] }
    */
   enforceCardinality(currentTags, desiredTags) {
     const merged = { ...currentTags };
@@ -166,15 +169,15 @@ class TagCardinalityEnforcer {
    *
    * @example
    * const delta = enforcer.computeDelta(
-   *   { Application: 'APP001', Compliance: ['PCI'] },
-   *   { Application: 'APP002', Compliance: ['PCI', 'HIPAA'] }
+   *   { AppCI: 'APP001', Compliance: ['PCI'] },
+   *   { AppCI: 'APP002', Compliance: ['PCI', 'HIPAA'] }
    * );
    * // delta.toAdd => [
-   * //   { tag: 'APP002', scope: 'Application' },
+   * //   { tag: 'APP002', scope: 'AppCI' },
    * //   { tag: 'HIPAA', scope: 'Compliance' }
    * // ]
    * // delta.toRemove => [
-   * //   { tag: 'APP001', scope: 'Application' }
+   * //   { tag: 'APP001', scope: 'AppCI' }
    * // ]
    */
   computeDelta(current, desired) {

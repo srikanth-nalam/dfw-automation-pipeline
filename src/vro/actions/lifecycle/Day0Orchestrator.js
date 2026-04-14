@@ -69,7 +69,7 @@ const PROPAGATION_POLL_CONFIG = Object.freeze({
  *   site: 'NDCNG',
  *   vmName: 'srv-web-01',
  *   vmSpec: { cpu: 4, memoryGb: 16, diskGb: 100, network: 'dvs-prod-web' },
- *   tags: { Application: 'APP001', Environment: 'Production', Tier: 'Web' },
+ *   tags: { Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' },
  *   callbackUrl: 'https://snow.company.internal/api/callback'
  * });
  */
@@ -423,7 +423,7 @@ class Day0Orchestrator extends LifecycleOrchestrator {
    *
    * @param {string} vmId - The vCenter VM identifier.
    * @param {Object} tags - Tag map keyed by category (scope), e.g.
-   *   `{ Application: 'APP001', Environment: 'Production' }`.
+   *   `{ AppCI: 'APP001', Environment: 'Production' }`.
    * @param {string} site - Site code for endpoint resolution.
    * @returns {Promise<{vmId: string, appliedTags: Object, tagCount: number}>}
    *   The applied tags and count.

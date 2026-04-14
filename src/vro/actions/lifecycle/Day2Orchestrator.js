@@ -56,8 +56,8 @@ const PROPAGATION_POLL_CONFIG = Object.freeze({
  *   site: 'NDCNG',
  *   vmId: 'vm-1234',
  *   vmName: 'srv-web-01',
- *   tags: { Environment: 'Staging', Compliance: ['HIPAA'] },
- *   expectedCurrentTags: { Environment: 'Production', Compliance: ['PCI'] },
+ *   tags: { Environment: 'Staging', SystemRole: 'Web' },
+ *   expectedCurrentTags: { Environment: 'Production', SystemRole: 'Application' },
  *   callbackUrl: 'https://snow.company.internal/api/callback'
  * });
  */

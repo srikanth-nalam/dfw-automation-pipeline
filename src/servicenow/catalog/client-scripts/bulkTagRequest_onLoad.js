@@ -59,19 +59,21 @@ const BATCH_SIZE_CONFIG = {
  */
 const CSV_FORMAT_HELP = [
     'CSV Format Requirements:',
-    '  Column headers (first row): vmName, Application, Tier, Environment, Compliance, DataClassification, CostCenter',
+    '  Column headers (first row): vmName, Region, SecurityZone, Environment, AppCI, SystemRole, Compliance, DataClassification, CostCenter',
     '  - vmName (required): The VM name as it appears in vCenter',
-    '  - Application (required): Application identifier (e.g., APP001)',
-    '  - Tier (required): Web, Application, or Database',
+    '  - Region (required): NDCNG or TULNG',
+    '  - SecurityZone (required): Greenzone, DMZ, Restricted, Management, or External',
     '  - Environment (required): Production, Staging, Development, Sandbox, UAT',
-    '  - Compliance (required): Comma-separated within quotes (e.g., "PCI,SOX")',
-    '  - DataClassification (required): Public, Internal, Confidential, Restricted',
+    '  - AppCI (required): Application CI identifier (e.g., APP001)',
+    '  - SystemRole (required): Web, Application, Database, Middleware, Utility, or SharedServices',
+    '  - Compliance (optional): Comma-separated within quotes (e.g., "PCI,SOX")',
+    '  - DataClassification (optional): Public, Internal, Confidential, Restricted',
     '  - CostCenter (optional): Cost center code',
     '',
     'Example:',
-    '  vmName,Application,Tier,Environment,Compliance,DataClassification,CostCenter',
-    '  SRV-WEB-001,APP001,Web,Production,"PCI",Confidential,CC-IT-001',
-    '  SRV-APP-002,APP001,Application,Production,"PCI,SOX",Confidential,CC-IT-001'
+    '  vmName,Region,SecurityZone,Environment,AppCI,SystemRole,Compliance,DataClassification,CostCenter',
+    '  SRV-WEB-001,NDCNG,Greenzone,Production,APP001,Web,"PCI",Confidential,CC-IT-001',
+    '  SRV-APP-002,TULNG,DMZ,Production,APP001,Application,"PCI,SOX",Confidential,CC-IT-001'
 ].join('\n');
 
 // ---------------------------------------------------------------------------

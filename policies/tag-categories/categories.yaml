@@ -20,72 +20,59 @@ metadata:
 
 categories:
   # --------------------------------------------------------------------------
-  # Application
+  # Region
   # --------------------------------------------------------------------------
-  - category_name: "Application"
-    display_name: "Application Code"
+  - category_name: "Region"
+    display_name: "Deployment Region"
     description: >
-      Identifies the application that owns the VM. The value is the
-      registered application code from the enterprise CMDB (e.g., APP001,
-      APP002). Every VM must have exactly one Application tag to ensure
-      proper micro-segmentation group membership and cost allocation.
+      Identifies the physical data center region where the VM is deployed.
+      Drives site-specific NSX Manager and vCenter endpoint resolution.
     cardinality: "single-value"
     required: true
-    nsx_scope: "Application"
-    validation:
-      pattern: "^[A-Z]{2,5}[0-9]{3,5}$"
-      description: "2-5 uppercase letters followed by 3-5 digits"
-      examples:
-        - "APP001"
-        - "WEB002"
-        - "DB003"
-    governance:
-      approval_required: false
-      auto_registered: true
-      source_of_truth: "ServiceNow CMDB — Application Portfolio"
-    notes: >
-      Application codes are registered during the application onboarding
-      process. The code is immutable once assigned. Decommissioned
-      application codes are retired but never reused.
-
-  # --------------------------------------------------------------------------
-  # Tier
-  # --------------------------------------------------------------------------
-  - category_name: "Tier"
-    display_name: "Deployment Tier"
-    description: >
-      Identifies the architectural tier of the VM within its application
-      stack. Used to enforce micro-segmentation rules that control
-      inter-tier communication (e.g., web-to-app, app-to-database).
-    cardinality: "single-value"
-    required: true
-    nsx_scope: "Tier"
+    nsx_scope: "Region"
     allowed_values:
-      - value: "Web"
-        description: "Front-end web servers, reverse proxies, and static content servers"
-        typical_ports: [80, 443]
-      - value: "Application"
-        description: "Business logic servers, API gateways, and middleware"
-        typical_ports: [8080, 8443]
-      - value: "Database"
-        description: "Relational databases, NoSQL stores, and data warehouses"
-        typical_ports: [1521, 5432, 3306, 1433, 27017]
-      - value: "Middleware"
-        description: "Message queues, ESBs, and integration platforms"
-        typical_ports: [5672, 61616, 9092]
-      - value: "Utility"
-        description: "Infrastructure utilities: jump hosts, bastion servers, automation runners"
-        typical_ports: [22, 3389, 5985]
-      - value: "Shared-Services"
-        description: "Cross-cutting services: DNS, NTP, LDAP, monitoring, backup"
-        typical_ports: [53, 123, 389, 636]
+      - value: "NDCNG"
+        description: "North Data Center Next Generation"
+      - value: "TULNG"
+        description: "Tulsa Data Center Next Generation"
     governance:
       approval_required: false
       auto_registered: false
-      source_of_truth: "Enterprise Architecture — Tier Taxonomy"
+      source_of_truth: "Infrastructure — Site Registry"
     notes: >
-      Each VM belongs to exactly one tier. Multi-function VMs must be
-      decomposed or assigned to the highest-privilege tier they serve.
+      Region is determined by the physical deployment site and cannot
+      be changed without migrating the VM.
+
+  # --------------------------------------------------------------------------
+  # SecurityZone
+  # --------------------------------------------------------------------------
+  - category_name: "SecurityZone"
+    display_name: "Security Zone"
+    description: >
+      Identifies the network security zone of the VM. Drives DFW policy
+      evaluation and controls inter-zone communication rules.
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "SecurityZone"
+    allowed_values:
+      - value: "Greenzone"
+        description: "Standard internal trusted zone"
+      - value: "DMZ"
+        description: "Demilitarized zone for externally-facing services"
+      - value: "Restricted"
+        description: "High-security restricted access zone"
+      - value: "Management"
+        description: "Infrastructure management and monitoring zone"
+      - value: "External"
+        description: "External-facing services zone"
+    governance:
+      approval_required: true
+      approver_role: "Security Architect"
+      auto_registered: false
+      source_of_truth: "Network Security — Zone Registry"
+    notes: >
+      Security zone assignment drives DFW micro-segmentation policies.
+      Zone changes require Security Architect approval.
 
   # --------------------------------------------------------------------------
   # Environment
@@ -139,6 +126,75 @@ categories:
       re-tagging and triggers automatic DFW policy re-evaluation.
 
   # --------------------------------------------------------------------------
+  # AppCI
+  # --------------------------------------------------------------------------
+  - category_name: "AppCI"
+    display_name: "Application CI"
+    description: >
+      Identifies the application configuration item that owns the VM.
+      The value is the registered application code from the enterprise
+      CMDB (e.g., APP001, APP002). Every VM must have exactly one AppCI
+      tag to ensure proper micro-segmentation group membership and cost
+      allocation.
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "AppCI"
+    validation:
+      pattern: "^[A-Z]{2,5}[0-9]{3,5}$"
+      description: "2-5 uppercase letters followed by 3-5 digits"
+      examples:
+        - "APP001"
+        - "WEB002"
+        - "DB003"
+    governance:
+      approval_required: false
+      auto_registered: true
+      source_of_truth: "ServiceNow CMDB — Application Portfolio"
+    notes: >
+      Application CI codes are registered during the application
+      onboarding process. The code is immutable once assigned.
+      Decommissioned application codes are retired but never reused.
+
+  # --------------------------------------------------------------------------
+  # SystemRole
+  # --------------------------------------------------------------------------
+  - category_name: "SystemRole"
+    display_name: "System Role"
+    description: >
+      Identifies the functional role of the VM within its application
+      stack. Used to enforce micro-segmentation rules that control
+      inter-role communication (e.g., web-to-app, app-to-database).
+    cardinality: "single-value"
+    required: true
+    nsx_scope: "SystemRole"
+    allowed_values:
+      - value: "Web"
+        description: "Front-end web servers, reverse proxies, and static content servers"
+        typical_ports: [80, 443]
+      - value: "Application"
+        description: "Business logic servers, API gateways, and middleware"
+        typical_ports: [8080, 8443]
+      - value: "Database"
+        description: "Relational databases, NoSQL stores, and data warehouses"
+        typical_ports: [1521, 5432, 3306, 1433, 27017]
+      - value: "Middleware"
+        description: "Message queues, ESBs, and integration platforms"
+        typical_ports: [5672, 61616, 9092]
+      - value: "Utility"
+        description: "Infrastructure utilities: jump hosts, bastion servers, automation runners"
+        typical_ports: [22, 3389, 5985]
+      - value: "SharedServices"
+        description: "Cross-cutting services: DNS, NTP, LDAP, monitoring, backup"
+        typical_ports: [53, 123, 389, 636]
+    governance:
+      approval_required: false
+      auto_registered: false
+      source_of_truth: "Enterprise Architecture — Role Taxonomy"
+    notes: >
+      Each VM belongs to exactly one system role. Multi-function VMs must
+      be decomposed or assigned to the highest-privilege role they serve.
+
+  # --------------------------------------------------------------------------
   # Compliance
   # --------------------------------------------------------------------------
   - category_name: "Compliance"
@@ -149,7 +205,7 @@ categories:
       (e.g., both PCI and SOX). Compliance tags drive audit scope
       definitions, enhanced logging, and encryption requirements.
     cardinality: "multi-value"
-    required: true
+    required: false
     nsx_scope: "Compliance"
     allowed_values:
       - value: "PCI"
@@ -197,7 +253,7 @@ categories:
       stringency, and data handling procedures. Classification follows
       the enterprise data governance framework.
     cardinality: "single-value"
-    required: true
+    required: false
     nsx_scope: "DataClassification"
     allowed_values:
       - value: "Public"

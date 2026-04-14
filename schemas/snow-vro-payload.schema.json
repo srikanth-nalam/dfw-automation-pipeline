@@ -177,32 +177,30 @@
       "type": "object",
       "description": "Tag assignments for the VM. Maps tag category names to their values. Single-value categories use strings; multi-value categories (Compliance) use arrays of strings. All values must exist in the Enterprise Tag Dictionary.",
       "required": [
-        "Application",
-        "Tier",
+        "Region",
+        "SecurityZone",
         "Environment",
-        "Compliance",
-        "DataClassification"
+        "AppCI",
+        "SystemRole"
       ],
       "properties": {
-        "Application": {
+        "Region": {
           "type": "string",
-          "description": "Application code from the enterprise CMDB. Single-value. Dynamically validated against the tag dictionary.",
-          "minLength": 1,
-          "maxLength": 128,
-          "examples": ["APP001"]
+          "description": "Deployment region (data center site). Single-value.",
+          "enum": ["NDCNG", "TULNG"],
+          "examples": ["NDCNG"]
         },
-        "Tier": {
+        "SecurityZone": {
           "type": "string",
-          "description": "Deployment tier within the application stack. Single-value.",
+          "description": "Network security zone assignment. Single-value.",
           "enum": [
-            "Web",
-            "Application",
-            "Database",
-            "Middleware",
-            "Utility",
-            "Shared-Services"
+            "Greenzone",
+            "DMZ",
+            "Restricted",
+            "Management",
+            "External"
           ],
-          "examples": ["Web"]
+          "examples": ["Greenzone"]
         },
         "Environment": {
           "type": "string",
@@ -218,9 +216,29 @@
           ],
           "examples": ["Production"]
         },
+        "AppCI": {
+          "type": "string",
+          "description": "Application CI code from the enterprise CMDB. Single-value. Dynamically validated against the tag dictionary.",
+          "minLength": 1,
+          "maxLength": 128,
+          "examples": ["APP001"]
+        },
+        "SystemRole": {
+          "type": "string",
+          "description": "Functional system role within the application stack. Single-value.",
+          "enum": [
+            "Web",
+            "Application",
+            "Database",
+            "Middleware",
+            "Utility",
+            "SharedServices"
+          ],
+          "examples": ["Web"]
+        },
         "Compliance": {
           "type": "array",
-          "description": "Applicable compliance frameworks. Multi-value. At least one value required; use ['None'] if no framework applies. 'None' is mutually exclusive with other values.",
+          "description": "Applicable compliance frameworks. Multi-value, optional. Use ['None'] if no framework applies. 'None' is mutually exclusive with other values.",
           "items": {
             "type": "string",
             "enum": ["PCI", "HIPAA", "SOX", "None"]
@@ -231,7 +249,7 @@
         },
         "DataClassification": {
           "type": "string",
-          "description": "Data sensitivity classification level. Single-value.",
+          "description": "Data sensitivity classification level. Single-value, optional.",
           "enum": [
             "Public",
             "Internal",

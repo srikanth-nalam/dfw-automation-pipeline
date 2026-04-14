@@ -205,9 +205,11 @@ function _populateVMContext(ciSysId) {
  */
 function _setVMContextFields(tags) {
     const contextMappings = [
-        { field: 'current_application', key: 'application' },
+        { field: 'current_app_ci', key: 'app_ci' },
         { field: 'current_environment', key: 'environment' },
-        { field: 'current_tier', key: 'tier' },
+        { field: 'current_system_role', key: 'system_role' },
+        { field: 'current_region', key: 'region' },
+        { field: 'current_security_zone', key: 'security_zone' },
         { field: 'current_compliance', key: 'compliance' }
     ];
 
