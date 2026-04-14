@@ -1,0 +1,44 @@
+{
+  "name": "DFW CMDB Validation — Weekly Scan",
+  "description": "Weekly scheduled job that triggers the DFW CMDB Validation workflow in vRO. Cross-references ServiceNow CMDB CI records (cmdb_ci_vm_instance) against actual NSX-T tag state and vCenter inventory. Identifies orphaned CIs, missing VMs, tag mismatches, and stale application references.",
+  "active": true,
+  "runAs": "x_dfw.service_account",
+  "schedule": {
+    "type": "weekly",
+    "dayOfWeek": "sunday",
+    "time": "02:00:00",
+    "timezone": "America/Chicago"
+  },
+  "script": {
+    "type": "rest_trigger",
+    "description": "Invokes the vRO DFW-CMDBValidation workflow for each active site",
+    "restMessage": "vRO_DFW_Automation",
+    "httpMethod": "POST",
+    "endpoint": "/api/workflows/com.dfw.automation.cmdb-validation/executions",
+    "payload": {
+      "site": "ALL",
+      "scope": "full",
+      "reportFormat": "json"
+    }
+  },
+  "notification": {
+    "onFailure": {
+      "recipients": ["cmdb-governance@company.com", "dfw-operations@company.com"],
+      "template": "DFW Scheduled Job Failure"
+    },
+    "onSuccess": {
+      "recipients": ["cmdb-governance@company.com"],
+      "template": "DFW CMDB Validation Report",
+      "condition": "mismatchCount > 0"
+    }
+  },
+  "logging": {
+    "table": "x_dfw_audit_log",
+    "category": "CMDB_VALIDATION",
+    "retentionDays": 90
+  },
+  "timeout": {
+    "minutes": 120,
+    "onTimeout": "abort_and_notify"
+  }
+}

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.cmdb-validation"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - CMDB Validation</display-name>
+  <description>
+    Scheduled CMDB validation workflow that cross-references ServiceNow CMDB CI
+    records with actual NSX-T tag state and vCenter inventory. Identifies
+    orphaned CIs, missing VMs, tag mismatches, and stale application references.
+    Generates a validation report for the CMDB governance team.
+
+    Triggered by: vRO scheduled task (weekly) or ServiceNow scheduled job.
+    Orchestrator: CMDBValidator
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="site" type="string"/>
+    <param name="scope" type="string"/>
+    <param name="reportFormat" type="string"/>
+  </input>
+
+  <output>
+    <param name="validationReport" type="string"/>
+    <param name="mismatchCount" type="number"/>
+    <param name="orphanedCICount" type="number"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="cmdbInventory" type="Array/Properties" read-only="false"/>
+  <attrib name="vcenterInventory" type="Array/Properties" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.cmdb/CMDBValidator
+      - com.dfw.tags/TagOperations
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/VcenterApiAdapter
+  -->
+</workflow>

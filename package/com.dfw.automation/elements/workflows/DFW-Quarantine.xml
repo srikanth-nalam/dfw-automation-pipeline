@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.quarantine"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - Quarantine</display-name>
+  <description>
+    Emergency quarantine workflow that isolates a compromised or non-compliant VM
+    by applying a deny-all DFW rule at the highest priority. Preserves existing
+    tags for forensic reference, logs the quarantine event, and notifies the
+    security operations team via ServiceNow incident.
+
+    Triggered by: ServiceNow Quarantine Request catalog item or automated
+    security event detection.
+    Orchestrator: QuarantineOrchestrator
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="correlationId" type="string"/>
+    <param name="requestPayload" type="string"/>
+    <param name="callbackUrl" type="string"/>
+    <param name="callbackToken" type="string"/>
+  </input>
+
+  <output>
+    <param name="result" type="string"/>
+    <param name="status" type="string"/>
+    <param name="quarantineRuleId" type="string"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="vmCurrentState" type="Properties" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.lifecycle/QuarantineOrchestrator
+      - com.dfw.dfw/PolicyDeployer
+      - com.dfw.dfw/RuleRegistry
+      - com.dfw.tags/TagOperations
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/SnowPayloadAdapter
+  -->
+</workflow>

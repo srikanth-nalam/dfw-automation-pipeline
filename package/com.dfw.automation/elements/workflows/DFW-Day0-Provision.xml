@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.day0-provision"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - Day 0 Provision</display-name>
+  <description>
+    Day-0 provisioning workflow for new VM builds. Receives a ServiceNow RITM
+    payload, validates the 5-tag assignment (Region, SecurityZone, Environment,
+    AppCI, SystemRole), applies NSX-T tags, verifies security group membership,
+    deploys DFW policies, and sends the callback result to ServiceNow.
+
+    Triggered by: ServiceNow VM Build Request catalog item via vRO REST trigger.
+    Orchestrator: Day0Orchestrator
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="correlationId" type="string"/>
+    <param name="requestPayload" type="string"/>
+    <param name="callbackUrl" type="string"/>
+    <param name="callbackToken" type="string"/>
+  </input>
+
+  <output>
+    <param name="result" type="string"/>
+    <param name="status" type="string"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="tagMap" type="Properties" read-only="false"/>
+  <attrib name="vmMoRef" type="string" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.shared/PayloadValidator
+      - com.dfw.lifecycle/Day0Orchestrator
+      - com.dfw.lifecycle/SagaCoordinator
+      - com.dfw.tags/TagOperations
+      - com.dfw.tags/TagCardinalityEnforcer
+      - com.dfw.tags/TagPropagationVerifier
+      - com.dfw.groups/GroupMembershipVerifier
+      - com.dfw.dfw/DFWPolicyValidator
+      - com.dfw.dfw/PolicyDeployer
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/VcenterApiAdapter
+      - com.dfw.adapters/SnowPayloadAdapter
+  -->
+</workflow>

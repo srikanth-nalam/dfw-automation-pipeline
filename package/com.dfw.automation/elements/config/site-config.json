@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "1.0",
+  "description": "Per-site configuration for DFW Automation Pipeline deployments",
+  "sites": {
+    "NDCNG": {
+      "displayName": "North Data Center Next Generation",
+      "region": "NDCNG",
+      "active": true,
+      "endpoints": {
+        "vcenter": {
+          "url": "https://vcenter-ndcng.company.internal",
+          "apiVersion": "8.0",
+          "authType": "basic",
+          "credentialRef": "{{vault:secret/vro/vcenter/ndcng}}"
+        },
+        "nsx": {
+          "url": "https://nsx-manager-ndcng.company.internal",
+          "apiVersion": "4.1",
+          "authType": "basic",
+          "credentialRef": "{{vault:secret/vro/nsx/ndcng}}"
+        },
+        "nsxGlobal": {
+          "url": "https://nsx-global-ndcng.company.internal",
+          "apiVersion": "4.1",
+          "authType": "basic",
+          "credentialRef": "{{vault:secret/vro/nsx-global/ndcng}}"
+        }
+      },
+      "clusters": [
+        "NDCNG-PROD-CL01",
+        "NDCNG-PROD-CL02",
+        "NDCNG-NONPROD-CL01"
+      ],
+      "datastores": [
+        "NDCNG-VSAN-PROD-DS01",
+        "NDCNG-VSAN-NONPROD-DS01"
+      ],
+      "networks": {
+        "production": "NDCNG-PROD-WEB-VLAN100",
+        "management": "NDCNG-MGMT-VLAN10",
+        "dmz": "NDCNG-DMZ-VLAN200"
+      },
+      "tagDefaults": {
+        "Region": "NDCNG"
+      }
+    },
+    "TULNG": {
+      "displayName": "Tulsa Data Center Next Generation",
+      "region": "TULNG",
+      "active": true,
+      "endpoints": {
+        "vcenter": {
+          "url": "https://vcenter-tulng.company.internal",
+          "apiVersion": "8.0",
+          "authType": "basic",
+          "credentialRef": "{{vault:secret/vro/vcenter/tulng}}"
+        },
+        "nsx": {
+          "url": "https://nsx-manager-tulng.company.internal",
+          "apiVersion": "4.1",
+          "authType": "basic",
+          "credentialRef": "{{vault:secret/vro/nsx/tulng}}"
+        },
+        "nsxGlobal": {
+          "url": "https://nsx-global-tulng.company.internal",
+          "apiVersion": "4.1",
+          "authType": "basic",
+          "credentialRef": "{{vault:secret/vro/nsx-global/tulng}}"
+        }
+      },
+      "clusters": [
+        "TULNG-PROD-CL01",
+        "TULNG-PROD-CL02",
+        "TULNG-NONPROD-CL01"
+      ],
+      "datastores": [
+        "TULNG-VSAN-PROD-DS01",
+        "TULNG-VSAN-NONPROD-DS01"
+      ],
+      "networks": {
+        "production": "TULNG-PROD-WEB-VLAN100",
+        "management": "TULNG-MGMT-VLAN10",
+        "dmz": "TULNG-DMZ-VLAN200"
+      },
+      "tagDefaults": {
+        "Region": "TULNG"
+      }
+    }
+  },
+  "globalSettings": {
+    "defaultSite": "NDCNG",
+    "failoverSite": "TULNG",
+    "multiSiteEnabled": true,
+    "tagCategories": {
+      "required": ["Region", "SecurityZone", "Environment", "AppCI", "SystemRole"],
+      "optional": ["Compliance", "DataClassification", "CostCenter"]
+    },
+    "nsxPolicyPaths": {
+      "environmentIsolation": "/infra/domains/default/security-policies/env-zone-isolation",
+      "applicationTemplate": "/infra/domains/default/security-policies/app-template",
+      "sharedServices": "/infra/domains/default/security-policies/shared-services",
+      "emergencyQuarantine": "/infra/domains/default/security-policies/emergency-quarantine"
+    }
+  }
+}

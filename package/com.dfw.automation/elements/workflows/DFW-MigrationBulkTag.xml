@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.migration-bulk-tag"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - Migration Bulk Tag</display-name>
+  <description>
+    Bulk re-tagging workflow for VMs migrated between data center sites or
+    environments. Updates Region and site-specific tags, verifies policy
+    continuity at the destination site, and validates security group membership
+    after migration.
+
+    Triggered by: Migration orchestration tooling or manual request via
+    ServiceNow catalog item.
+    Orchestrator: MigrationBulkTagger
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="correlationId" type="string"/>
+    <param name="vmList" type="string"/>
+    <param name="sourceSite" type="string"/>
+    <param name="destinationSite" type="string"/>
+    <param name="callbackUrl" type="string"/>
+    <param name="callbackToken" type="string"/>
+  </input>
+
+  <output>
+    <param name="result" type="string"/>
+    <param name="status" type="string"/>
+    <param name="migratedCount" type="number"/>
+    <param name="failedCount" type="number"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="migrationManifest" type="Array/Properties" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.shared/RateLimiter
+      - com.dfw.lifecycle/MigrationBulkTagger
+      - com.dfw.lifecycle/MigrationVerifier
+      - com.dfw.tags/TagOperations
+      - com.dfw.tags/TagPropagationVerifier
+      - com.dfw.groups/GroupMembershipVerifier
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/VcenterApiAdapter
+      - com.dfw.adapters/SnowPayloadAdapter
+  -->
+</workflow>

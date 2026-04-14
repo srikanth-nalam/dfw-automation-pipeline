@@ -1,0 +1,172 @@
+{
+  "name": "Rule Request",
+  "shortDescription": "Request creation, modification, or renewal of a DFW firewall rule",
+  "description": "Manages the lifecycle of NSX Distributed Firewall rules. Supports creating new rules, modifying existing rules, renewing expiring rules, and requesting rule deactivation. All rules undergo conflict detection before deployment and are tracked in the DFW Rule Registry.",
+  "category": "Security / Firewall",
+  "catalogName": "Service Catalog",
+  "active": true,
+  "approvalRequired": true,
+  "approvalGroup": "Firewall Change Advisory Board",
+  "fulfillmentGroup": "Network Security Operations",
+  "sla": {
+    "responseTime": "4 hours",
+    "resolutionTime": "2 business days"
+  },
+  "vroWorkflow": "DFW-RuleLifecycle",
+  "vroEndpoint": "vRO_DFW_Automation",
+  "variables": [
+    {
+      "name": "request_action",
+      "label": "Action",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "create", "label": "Create — New firewall rule"},
+        {"value": "modify", "label": "Modify — Change existing rule"},
+        {"value": "renew", "label": "Renew — Extend rule expiration"},
+        {"value": "deactivate", "label": "Deactivate — Disable rule"}
+      ],
+      "helpText": "Type of rule lifecycle action to perform",
+      "order": 100
+    },
+    {
+      "name": "existing_rule_id",
+      "label": "Existing Rule ID (for modify/renew/deactivate)",
+      "type": "reference",
+      "referenceTable": "x_dfw_rule_registry",
+      "mandatory": false,
+      "helpText": "Required for modify, renew, and deactivate actions. Select the rule from the DFW Rule Registry.",
+      "order": 200
+    },
+    {
+      "name": "rule_name",
+      "label": "Rule Name",
+      "type": "string",
+      "mandatory": true,
+      "maxLength": 128,
+      "helpText": "Descriptive name for the firewall rule",
+      "order": 300
+    },
+    {
+      "name": "source_group",
+      "label": "Source Group",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "app_specific", "label": "Application-Specific Group (specify AppCI + SystemRole)"},
+        {"value": "environment", "label": "Environment Group (specify Environment)"},
+        {"value": "security_zone", "label": "Security Zone Group (specify SecurityZone)"},
+        {"value": "any", "label": "Any"}
+      ],
+      "helpText": "Source security group for the rule",
+      "order": 400
+    },
+    {
+      "name": "source_app_ci",
+      "label": "Source Application CI",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_service",
+      "mandatory": false,
+      "helpText": "Application CI for the source group (required when Source Group is Application-Specific)",
+      "order": 500
+    },
+    {
+      "name": "source_system_role",
+      "label": "Source System Role",
+      "type": "select",
+      "mandatory": false,
+      "choices": [
+        {"value": "Web", "label": "Web"},
+        {"value": "Application", "label": "Application"},
+        {"value": "Database", "label": "Database"},
+        {"value": "Middleware", "label": "Middleware"},
+        {"value": "Utility", "label": "Utility"},
+        {"value": "SharedServices", "label": "Shared Services"}
+      ],
+      "helpText": "System role for the source group (required when Source Group is Application-Specific)",
+      "order": 600
+    },
+    {
+      "name": "destination_group",
+      "label": "Destination Group",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "app_specific", "label": "Application-Specific Group (specify AppCI + SystemRole)"},
+        {"value": "environment", "label": "Environment Group (specify Environment)"},
+        {"value": "security_zone", "label": "Security Zone Group (specify SecurityZone)"},
+        {"value": "any", "label": "Any"}
+      ],
+      "helpText": "Destination security group for the rule",
+      "order": 700
+    },
+    {
+      "name": "destination_app_ci",
+      "label": "Destination Application CI",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_service",
+      "mandatory": false,
+      "helpText": "Application CI for the destination group",
+      "order": 800
+    },
+    {
+      "name": "destination_system_role",
+      "label": "Destination System Role",
+      "type": "select",
+      "mandatory": false,
+      "choices": [
+        {"value": "Web", "label": "Web"},
+        {"value": "Application", "label": "Application"},
+        {"value": "Database", "label": "Database"},
+        {"value": "Middleware", "label": "Middleware"},
+        {"value": "Utility", "label": "Utility"},
+        {"value": "SharedServices", "label": "Shared Services"}
+      ],
+      "helpText": "System role for the destination group",
+      "order": 900
+    },
+    {
+      "name": "service_ports",
+      "label": "Service / Ports",
+      "type": "string",
+      "mandatory": true,
+      "maxLength": 256,
+      "helpText": "Protocol and ports (e.g., TCP/443, TCP/8080-8090, UDP/53)",
+      "order": 1000
+    },
+    {
+      "name": "rule_action",
+      "label": "Rule Action",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "ALLOW", "label": "Allow"},
+        {"value": "DROP", "label": "Drop"},
+        {"value": "REJECT", "label": "Reject"}
+      ],
+      "defaultValue": "ALLOW",
+      "helpText": "Firewall action for matching traffic",
+      "order": 1100
+    },
+    {
+      "name": "expiration_days",
+      "label": "Rule Expiration (Days)",
+      "type": "integer",
+      "mandatory": true,
+      "min": 1,
+      "max": 365,
+      "defaultValue": 90,
+      "helpText": "Number of days until the rule expires and requires review (max 365 days)",
+      "order": 1200
+    },
+    {
+      "name": "justification",
+      "label": "Business Justification",
+      "type": "textarea",
+      "mandatory": true,
+      "maxLength": 2000,
+      "helpText": "Business justification for the firewall rule request",
+      "order": 1300
+    }
+  ]
+}

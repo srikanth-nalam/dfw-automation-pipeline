@@ -1,0 +1,131 @@
+{
+  "name": "Quarantine Request",
+  "shortDescription": "Emergency quarantine a VM via DFW isolation rules",
+  "description": "Isolates a compromised or non-compliant VM by applying a deny-all DFW rule at the highest priority. The VM is immediately cut off from all network communication except management access for forensic investigation. Existing tags are preserved for audit trail. A ServiceNow security incident is automatically created.",
+  "category": "Security / Incident Response",
+  "catalogName": "Service Catalog",
+  "active": true,
+  "approvalRequired": false,
+  "approvalGroup": null,
+  "fulfillmentGroup": "Security Operations Center",
+  "sla": {
+    "responseTime": "15 minutes",
+    "resolutionTime": "1 hour"
+  },
+  "vroWorkflow": "DFW-Quarantine",
+  "vroEndpoint": "vRO_DFW_Automation",
+  "variables": [
+    {
+      "name": "vm_name",
+      "label": "VM Name",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_vm_instance",
+      "mandatory": true,
+      "helpText": "Select the VM to quarantine",
+      "order": 100
+    },
+    {
+      "name": "region",
+      "label": "Region",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "NDCNG", "label": "North Data Center Next Generation"},
+        {"value": "TULNG", "label": "Tulsa Data Center Next Generation"}
+      ],
+      "helpText": "Data center region where the VM is deployed",
+      "order": 200
+    },
+    {
+      "name": "security_zone",
+      "label": "Current Security Zone",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Greenzone", "label": "Greenzone"},
+        {"value": "DMZ", "label": "DMZ"},
+        {"value": "Restricted", "label": "Restricted"},
+        {"value": "Management", "label": "Management"},
+        {"value": "External", "label": "External"}
+      ],
+      "helpText": "Current security zone of the VM (for audit trail)",
+      "order": 300
+    },
+    {
+      "name": "environment",
+      "label": "Current Environment",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Production", "label": "Production"},
+        {"value": "Pre-Production", "label": "Pre-Production"},
+        {"value": "UAT", "label": "UAT"},
+        {"value": "Staging", "label": "Staging"},
+        {"value": "Development", "label": "Development"},
+        {"value": "Sandbox", "label": "Sandbox"},
+        {"value": "DR", "label": "Disaster Recovery"}
+      ],
+      "helpText": "Current environment of the VM (for audit trail)",
+      "order": 400
+    },
+    {
+      "name": "app_ci",
+      "label": "Application CI",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_service",
+      "mandatory": true,
+      "helpText": "Application that owns this VM",
+      "order": 500
+    },
+    {
+      "name": "system_role",
+      "label": "Current System Role",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Web", "label": "Web"},
+        {"value": "Application", "label": "Application"},
+        {"value": "Database", "label": "Database"},
+        {"value": "Middleware", "label": "Middleware"},
+        {"value": "Utility", "label": "Utility"},
+        {"value": "SharedServices", "label": "Shared Services"}
+      ],
+      "helpText": "Current system role of the VM (for audit trail)",
+      "order": 600
+    },
+    {
+      "name": "quarantine_reason",
+      "label": "Quarantine Reason",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "compromise", "label": "Suspected Compromise"},
+        {"value": "malware", "label": "Malware Detection"},
+        {"value": "policy_violation", "label": "Security Policy Violation"},
+        {"value": "unauthorized_access", "label": "Unauthorized Access Detected"},
+        {"value": "data_exfiltration", "label": "Data Exfiltration Attempt"},
+        {"value": "other", "label": "Other (specify in details)"}
+      ],
+      "helpText": "Reason for quarantining the VM",
+      "order": 700
+    },
+    {
+      "name": "incident_details",
+      "label": "Incident Details",
+      "type": "textarea",
+      "mandatory": true,
+      "maxLength": 4000,
+      "helpText": "Detailed description of the security incident that triggered this quarantine request",
+      "order": 800
+    },
+    {
+      "name": "preserve_management_access",
+      "label": "Preserve Management Access",
+      "type": "checkbox",
+      "mandatory": false,
+      "defaultValue": true,
+      "helpText": "When checked, allows SSH/RDP from the management network for forensic investigation",
+      "order": 900
+    }
+  ]
+}

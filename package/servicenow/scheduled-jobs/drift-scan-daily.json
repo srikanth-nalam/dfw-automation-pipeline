@@ -1,0 +1,43 @@
+{
+  "name": "DFW Drift Detection — Daily Scan",
+  "description": "Daily scheduled job that triggers the DFW Drift Scan workflow in vRO. Compares CMDB CI records against actual NSX-T tag state to identify tag drift (missing, extra, or mismatched tags), security group membership anomalies, and untagged VMs. Generates a drift report and flags items for remediation.",
+  "active": true,
+  "runAs": "x_dfw.service_account",
+  "schedule": {
+    "type": "daily",
+    "time": "03:00:00",
+    "timezone": "America/Chicago"
+  },
+  "script": {
+    "type": "rest_trigger",
+    "description": "Invokes the vRO DFW-DriftScan workflow for each active site",
+    "restMessage": "vRO_DFW_Automation",
+    "httpMethod": "POST",
+    "endpoint": "/api/workflows/com.dfw.automation.drift-scan/executions",
+    "payload": {
+      "site": "ALL",
+      "autoRemediate": false,
+      "scope": "full"
+    }
+  },
+  "notification": {
+    "onFailure": {
+      "recipients": ["dfw-operations@company.com"],
+      "template": "DFW Scheduled Job Failure"
+    },
+    "onSuccess": {
+      "recipients": ["dfw-operations@company.com", "security-compliance@company.com"],
+      "template": "DFW Drift Detection Report",
+      "condition": "driftCount > 0"
+    }
+  },
+  "logging": {
+    "table": "x_dfw_audit_log",
+    "category": "DRIFT_DETECTION",
+    "retentionDays": 90
+  },
+  "timeout": {
+    "minutes": 60,
+    "onTimeout": "abort_and_notify"
+  }
+}

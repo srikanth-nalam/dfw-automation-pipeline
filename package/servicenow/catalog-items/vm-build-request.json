@@ -1,0 +1,193 @@
+{
+  "name": "VM Build Request",
+  "shortDescription": "Request a new VM with DFW tag assignment and micro-segmentation policy deployment",
+  "description": "Provisions a new virtual machine with full NSX-T DFW tag assignment. Enforces the 5-tag model (Region, SecurityZone, Environment, AppCI, SystemRole), triggers security group evaluation, and deploys application-specific DFW policies. Includes CMDB CI creation and compliance tagging.",
+  "category": "Infrastructure / Virtual Machines",
+  "catalogName": "Service Catalog",
+  "active": true,
+  "approvalRequired": true,
+  "approvalGroup": "VM Provisioning Approvers",
+  "fulfillmentGroup": "Cloud Infrastructure Operations",
+  "sla": {
+    "responseTime": "4 hours",
+    "resolutionTime": "1 business day"
+  },
+  "vroWorkflow": "DFW-Day0-Provision",
+  "vroEndpoint": "vRO_DFW_Automation",
+  "variables": [
+    {
+      "name": "vm_name",
+      "label": "VM Name",
+      "type": "string",
+      "mandatory": true,
+      "maxLength": 64,
+      "helpText": "VM name following the enterprise naming convention (e.g., app001-web-prod-01)",
+      "order": 100
+    },
+    {
+      "name": "region",
+      "label": "Region",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "NDCNG", "label": "North Data Center Next Generation"},
+        {"value": "TULNG", "label": "Tulsa Data Center Next Generation"}
+      ],
+      "defaultValue": "NDCNG",
+      "helpText": "Physical data center region for VM deployment",
+      "order": 200
+    },
+    {
+      "name": "security_zone",
+      "label": "Security Zone",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Greenzone", "label": "Greenzone — Standard internal trusted zone"},
+        {"value": "DMZ", "label": "DMZ — Externally-facing services"},
+        {"value": "Restricted", "label": "Restricted — High-security restricted access"},
+        {"value": "Management", "label": "Management — Infrastructure management"},
+        {"value": "External", "label": "External — External-facing services"}
+      ],
+      "helpText": "Network security zone assignment (drives DFW policy evaluation)",
+      "order": 300
+    },
+    {
+      "name": "environment",
+      "label": "Environment",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Production", "label": "Production"},
+        {"value": "Pre-Production", "label": "Pre-Production"},
+        {"value": "UAT", "label": "UAT"},
+        {"value": "Staging", "label": "Staging"},
+        {"value": "Development", "label": "Development"},
+        {"value": "Sandbox", "label": "Sandbox"},
+        {"value": "DR", "label": "Disaster Recovery"}
+      ],
+      "helpText": "Deployment lifecycle environment",
+      "order": 400
+    },
+    {
+      "name": "app_ci",
+      "label": "Application CI",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_service",
+      "mandatory": true,
+      "helpText": "Application configuration item from the CMDB portfolio (e.g., APP001)",
+      "order": 500
+    },
+    {
+      "name": "system_role",
+      "label": "System Role",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Web", "label": "Web — Front-end web servers"},
+        {"value": "Application", "label": "Application — Business logic servers"},
+        {"value": "Database", "label": "Database — Data stores"},
+        {"value": "Middleware", "label": "Middleware — Message queues, ESBs"},
+        {"value": "Utility", "label": "Utility — Jump hosts, bastion servers"},
+        {"value": "SharedServices", "label": "Shared Services — DNS, NTP, LDAP"}
+      ],
+      "helpText": "Functional role of the VM within the application stack",
+      "order": 600
+    },
+    {
+      "name": "compliance",
+      "label": "Compliance Framework",
+      "type": "multi_select",
+      "mandatory": false,
+      "choices": [
+        {"value": "PCI", "label": "PCI DSS"},
+        {"value": "HIPAA", "label": "HIPAA"},
+        {"value": "SOX", "label": "SOX"},
+        {"value": "None", "label": "None"}
+      ],
+      "defaultValue": "None",
+      "helpText": "Applicable regulatory compliance frameworks",
+      "order": 700
+    },
+    {
+      "name": "data_classification",
+      "label": "Data Classification",
+      "type": "select",
+      "mandatory": false,
+      "choices": [
+        {"value": "Public", "label": "Public"},
+        {"value": "Internal", "label": "Internal"},
+        {"value": "Confidential", "label": "Confidential"},
+        {"value": "Restricted", "label": "Restricted"}
+      ],
+      "defaultValue": "Internal",
+      "helpText": "Data sensitivity classification level",
+      "order": 800
+    },
+    {
+      "name": "cost_center",
+      "label": "Cost Center",
+      "type": "string",
+      "mandatory": false,
+      "maxLength": 12,
+      "helpText": "Financial cost center code (e.g., CC1001). Auto-populated from user department if blank.",
+      "order": 900
+    },
+    {
+      "name": "vm_template",
+      "label": "VM Template",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "rhel9-hardened-base", "label": "RHEL 9 Hardened Base"},
+        {"value": "rhel8-hardened-base", "label": "RHEL 8 Hardened Base"},
+        {"value": "win2022-hardened-base", "label": "Windows Server 2022 Hardened"},
+        {"value": "ubuntu2204-hardened-base", "label": "Ubuntu 22.04 Hardened Base"}
+      ],
+      "helpText": "vCenter template for VM cloning",
+      "order": 1000
+    },
+    {
+      "name": "cpu_count",
+      "label": "CPU Count",
+      "type": "integer",
+      "mandatory": true,
+      "min": 1,
+      "max": 128,
+      "defaultValue": 4,
+      "helpText": "Number of virtual CPUs",
+      "order": 1100
+    },
+    {
+      "name": "memory_gb",
+      "label": "Memory (GB)",
+      "type": "integer",
+      "mandatory": true,
+      "min": 1,
+      "max": 1024,
+      "defaultValue": 16,
+      "helpText": "Memory allocation in gigabytes",
+      "order": 1200
+    },
+    {
+      "name": "disk_gb",
+      "label": "Disk Size (GB)",
+      "type": "integer",
+      "mandatory": true,
+      "min": 20,
+      "max": 16384,
+      "defaultValue": 100,
+      "helpText": "Primary disk size in gigabytes",
+      "order": 1300
+    },
+    {
+      "name": "justification",
+      "label": "Business Justification",
+      "type": "textarea",
+      "mandatory": true,
+      "maxLength": 2000,
+      "helpText": "Business justification for the VM provisioning request",
+      "order": 1400
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "name": "Tag Update Request",
+  "shortDescription": "Update NSX-T DFW tags on an existing VM",
+  "description": "Modifies one or more tag assignments on an existing virtual machine. Performs impact analysis before applying changes, updates NSX-T tags, re-evaluates security group membership, and verifies DFW policy continuity. Updates the corresponding CMDB CI record.",
+  "category": "Infrastructure / Virtual Machines",
+  "catalogName": "Service Catalog",
+  "active": true,
+  "approvalRequired": true,
+  "approvalGroup": "Change Advisory Board",
+  "fulfillmentGroup": "Cloud Infrastructure Operations",
+  "sla": {
+    "responseTime": "2 hours",
+    "resolutionTime": "4 hours"
+  },
+  "vroWorkflow": "DFW-Day2-TagUpdate",
+  "vroEndpoint": "vRO_DFW_Automation",
+  "variables": [
+    {
+      "name": "vm_name",
+      "label": "VM Name",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_vm_instance",
+      "mandatory": true,
+      "helpText": "Select the existing VM to update tags on",
+      "order": 100
+    },
+    {
+      "name": "region",
+      "label": "Region",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "NDCNG", "label": "North Data Center Next Generation"},
+        {"value": "TULNG", "label": "Tulsa Data Center Next Generation"}
+      ],
+      "helpText": "Deployment region (typically unchanged unless migrating)",
+      "order": 200
+    },
+    {
+      "name": "security_zone",
+      "label": "Security Zone",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Greenzone", "label": "Greenzone — Standard internal trusted zone"},
+        {"value": "DMZ", "label": "DMZ — Externally-facing services"},
+        {"value": "Restricted", "label": "Restricted — High-security restricted access"},
+        {"value": "Management", "label": "Management — Infrastructure management"},
+        {"value": "External", "label": "External — External-facing services"}
+      ],
+      "helpText": "Network security zone assignment (zone changes require Security Architect approval)",
+      "order": 300
+    },
+    {
+      "name": "environment",
+      "label": "Environment",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Production", "label": "Production"},
+        {"value": "Pre-Production", "label": "Pre-Production"},
+        {"value": "UAT", "label": "UAT"},
+        {"value": "Staging", "label": "Staging"},
+        {"value": "Development", "label": "Development"},
+        {"value": "Sandbox", "label": "Sandbox"},
+        {"value": "DR", "label": "Disaster Recovery"}
+      ],
+      "helpText": "Deployment lifecycle environment",
+      "order": 400
+    },
+    {
+      "name": "app_ci",
+      "label": "Application CI",
+      "type": "reference",
+      "referenceTable": "cmdb_ci_service",
+      "mandatory": true,
+      "helpText": "Application configuration item from the CMDB portfolio",
+      "order": 500
+    },
+    {
+      "name": "system_role",
+      "label": "System Role",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "Web", "label": "Web — Front-end web servers"},
+        {"value": "Application", "label": "Application — Business logic servers"},
+        {"value": "Database", "label": "Database — Data stores"},
+        {"value": "Middleware", "label": "Middleware — Message queues, ESBs"},
+        {"value": "Utility", "label": "Utility — Jump hosts, bastion servers"},
+        {"value": "SharedServices", "label": "Shared Services — DNS, NTP, LDAP"}
+      ],
+      "helpText": "Functional role of the VM within the application stack",
+      "order": 600
+    },
+    {
+      "name": "change_reason",
+      "label": "Reason for Tag Change",
+      "type": "textarea",
+      "mandatory": true,
+      "maxLength": 2000,
+      "helpText": "Explain why this tag change is required",
+      "order": 700
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.rule-lifecycle"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - Rule Lifecycle</display-name>
+  <description>
+    DFW rule lifecycle management workflow. Handles rule creation requests,
+    conflict detection, deployment, registry updates, and expiration scheduling.
+    Supports the full rule lifecycle from request through deactivation.
+
+    Triggered by: ServiceNow Rule Request catalog item via vRO REST trigger.
+    Orchestrator: RuleLifecycleManager
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="correlationId" type="string"/>
+    <param name="requestPayload" type="string"/>
+    <param name="callbackUrl" type="string"/>
+    <param name="callbackToken" type="string"/>
+  </input>
+
+  <output>
+    <param name="result" type="string"/>
+    <param name="status" type="string"/>
+    <param name="ruleId" type="string"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="ruleDefinition" type="Properties" read-only="false"/>
+  <attrib name="conflictReport" type="string" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.shared/PayloadValidator
+      - com.dfw.dfw/RuleLifecycleManager
+      - com.dfw.dfw/RuleConflictDetector
+      - com.dfw.dfw/DFWPolicyValidator
+      - com.dfw.dfw/PolicyDeployer
+      - com.dfw.dfw/RuleRegistry
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/SnowPayloadAdapter
+  -->
+</workflow>

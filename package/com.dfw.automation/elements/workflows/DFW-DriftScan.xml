@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.drift-scan"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - Drift Scan</display-name>
+  <description>
+    Scheduled drift detection workflow that compares CMDB CI records against
+    actual NSX-T tag state. Identifies tag drift (missing, extra, or mismatched
+    tags), security group membership anomalies, and untagged VMs. Generates a
+    drift report and optionally triggers auto-remediation.
+
+    Triggered by: vRO scheduled task (daily) or ServiceNow scheduled job.
+    Orchestrator: DriftDetectionWorkflow
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="site" type="string"/>
+    <param name="autoRemediate" type="boolean"/>
+    <param name="scope" type="string"/>
+  </input>
+
+  <output>
+    <param name="driftReport" type="string"/>
+    <param name="driftCount" type="number"/>
+    <param name="remediatedCount" type="number"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="cmdbRecords" type="Array/Properties" read-only="false"/>
+  <attrib name="nsxTagState" type="Array/Properties" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.lifecycle/DriftDetectionWorkflow
+      - com.dfw.tags/TagOperations
+      - com.dfw.tags/UntaggedVMScanner
+      - com.dfw.cmdb/CMDBValidator
+      - com.dfw.groups/GroupMembershipVerifier
+      - com.dfw.groups/GroupReconciler
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/VcenterApiAdapter
+  -->
+</workflow>
