@@ -577,6 +577,99 @@ sequenceDiagram
     DDW-->>CRON: { scannedVMs, driftFound, trendingVMs, summary }
 ```
 
+### NSX Hygiene Sweep Flow
+
+The NSX Hygiene Sweep Flow provides a coordinated cleanup operation that detects and remediates orphaned groups, stale rules, phantom VMs, stale tags, and unregistered workloads in a single orchestrated pass. The `NSXHygieneOrchestrator` sequences all cleanup tasks to avoid resource contention on the NSX Manager API and respects dependency ordering between tasks. Each task supports dryRun mode, and items requiring manual intervention are escalated to ServiceNow as incidents.
+
+**Flow**: ServiceNow triggers hygiene sweep -> NSXHygieneOrchestrator coordinates task sequence -> PhantomVMDetector identifies phantom VMs -> OrphanGroupCleaner removes empty groups -> StaleRuleReaper disables stale rules -> PolicyDeployer cleans empty sections -> StaleTagRemediator re-applies correct tags -> UnregisteredVMOnboarder creates CMDB CIs -> NSXHygieneOrchestrator sends callback to ServiceNow with summary
+
+```mermaid
+sequenceDiagram
+    participant SNOW as ServiceNow
+    participant HO as NSXHygieneOrchestrator
+    participant PVD as PhantomVMDetector
+    participant OGC as OrphanGroupCleaner
+    participant SRR as StaleRuleReaper
+    participant PD as PolicyDeployer
+    participant STR as StaleTagRemediator
+    participant UVO as UnregisteredVMOnboarder
+
+    SNOW->>HO: Trigger hygiene sweep (site, dryRun)
+    HO->>PVD: detectPhantomVMs(site)
+    PVD-->>HO: Phantom VM report
+    HO->>OGC: sweep(site, minAgeHours)
+    OGC-->>HO: Orphan group report (archived + deleted)
+    HO->>SRR: classifyAndDisable(site)
+    SRR-->>HO: Stale rule report (classified + disabled)
+    HO->>PD: cleanupEmptySections(site)
+    PD-->>HO: Empty section report (deleted sections)
+    HO->>STR: remediateStale(site)
+    STR-->>HO: Stale tag report (remediated + flagged)
+    HO->>UVO: onboardUnregistered(site)
+    UVO-->>HO: Onboarding report (CIs created)
+    HO->>SNOW: Callback with consolidated summary
+    HO->>SNOW: Create incidents for manual-review items
+```
+
+### Phantom VM Detection Flow
+
+The Phantom VM Detection Flow identifies VMs that exist in one inventory source (NSX or vCenter) but not the other. Phantom VMs indicate failed decommissions, partial migrations, or manual interventions that have left the environment in an inconsistent state. The `PhantomVMDetector` queries both NSX fabric API and vCenter API independently, then computes the set difference to identify discrepancies.
+
+**Flow**: PhantomVMDetector queries NSX for fabric VMs -> PhantomVMDetector queries vCenter for compute VMs -> Compute set difference (NSX-only and vCenter-only) -> Classify phantoms by source -> Generate report with recommended actions
+
+```mermaid
+sequenceDiagram
+    participant PVD as PhantomVMDetector
+    participant NSX as NSX Fabric API
+    participant VC as vCenter API
+    participant RPT as Report
+
+    PVD->>NSX: GET /api/v1/fabric/virtual-machines
+    NSX-->>PVD: NSX VM inventory (Set A)
+    PVD->>VC: GET /api/vcenter/vm
+    VC-->>PVD: vCenter VM inventory (Set B)
+    PVD->>PVD: Compute Set A - Set B (NSX-only phantoms)
+    PVD->>PVD: Compute Set B - Set A (vCenter-only phantoms)
+    PVD->>RPT: Generate phantom VM report
+    RPT-->>PVD: { nsxOnly: [...], vcenterOnly: [...], totalPhantoms: N }
+```
+
+### Orphan Group and Stale Rule Cleanup Flow
+
+The Orphan Group and Stale Rule Cleanup Flow removes empty NSX security groups and disables stale DFW rules that no longer serve an active security purpose. The `OrphanGroupCleaner` identifies groups with zero members that have exceeded the minimum age threshold, archives their full JSON definition, and deletes them. The `StaleRuleReaper` classifies all DFW rules into categories (stale, expired, unmanaged, active), archives stale rule definitions, and disables them via PATCH without deleting them.
+
+**Flow (Orphan Groups)**: OrphanGroupCleaner queries NSX groups -> Check member count per group -> Check referencing rules -> Filter by minimum age -> Archive group JSON -> Delete empty groups
+
+**Flow (Stale Rules)**: StaleRuleReaper queries NSX policies -> Classify each rule by age, state, and ownership -> Archive stale rule JSON -> Disable stale rules via PATCH
+
+```mermaid
+sequenceDiagram
+    participant OGC as OrphanGroupCleaner
+    participant SRR as StaleRuleReaper
+    participant NSX as NSX Manager
+    participant ARCH as Archive Store
+
+    Note over OGC,ARCH: Orphan Group Cleanup
+    OGC->>NSX: GET /policy/api/v1/infra/domains/default/groups
+    NSX-->>OGC: All security groups
+    OGC->>NSX: GET /groups/{groupId}/members (per group)
+    NSX-->>OGC: Member count per group
+    OGC->>OGC: Filter empty groups older than minAgeHours
+    OGC->>NSX: GET /groups/{groupId}/rules (check references)
+    NSX-->>OGC: Referencing rules
+    OGC->>ARCH: Archive group JSON definition
+    OGC->>NSX: DELETE /groups/{groupId}
+    NSX-->>OGC: 200 OK
+
+    Note over SRR,ARCH: Stale Rule Cleanup
+    SRR->>NSX: GET /policy/api/v1/infra/domains/default/security-policies
+    NSX-->>SRR: All policies with rules
+    SRR->>SRR: Classify rules (stale/expired/unmanaged/active)
+    SRR->>ARCH: Archive stale rule JSON definitions
+    SRR->>NSX: PATCH /security-policies/{policyId}/rules/{ruleId} (disabled: true)
+    NSX-->>SRR: 200 OK (rule disabled)
+```
+
 ---
 
 ## 5. Deployment Topology

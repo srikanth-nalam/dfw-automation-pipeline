@@ -19,15 +19,16 @@
 7. [FR-041 through FR-050: Error Handling, Retry, and Circuit Breaker](#7-fr-041-through-fr-050-error-handling-retry-and-circuit-breaker)
 8. [FR-051 through FR-060: Logging, Observability, and Compliance](#8-fr-051-through-fr-060-logging-observability-and-compliance)
 9. [FR-061 through FR-065: Policy-as-Code and Schema Validation](#9-fr-061-through-fr-065-policy-as-code-and-schema-validation)
-10. [Cross-Cutting Traceability Summary](#10-cross-cutting-traceability-summary)
+10. [FR-071 through FR-085: NSX Hygiene and Orphan Cleanup](#10-fr-071-through-fr-085-nsx-hygiene-and-orphan-cleanup)
+11. [Cross-Cutting Traceability Summary](#11-cross-cutting-traceability-summary)
 
 ---
 
 ## 1. Overview
 
-This Functional Requirements Design document provides a comprehensive traceability matrix mapping all 65 functional requirements (FR-001 through FR-065) from the Business Requirements Document (BRD) to their implementing design components, source files, test cases, and acceptance criteria. Each requirement is traceable from business need through implementation to verification.
+This Functional Requirements Design document provides a comprehensive traceability matrix mapping all 80 functional requirements (FR-001 through FR-085) from the Business Requirements Document (BRD) to their implementing design components, source files, test cases, and acceptance criteria. Each requirement is traceable from business need through implementation to verification.
 
-The requirements are organized into nine functional areas that align with the pipeline's module architecture:
+The requirements are organized into ten functional areas that align with the pipeline's module architecture:
 
 - **ServiceNow Catalog Form** (FR-001 to FR-010): Client-side form behavior, defaults, validation, and dynamic field filtering
 - **Tag Cardinality and Operations** (FR-011 to FR-020): Cardinality enforcement, conflict detection, idempotent tag CRUD, and delta computation
@@ -36,6 +37,7 @@ The requirements are organized into nine functional areas that align with the pi
 - **Error Handling, Retry, and Circuit Breaker** (FR-041 to FR-050): Structured error taxonomy, retry with exponential backoff, circuit breaker state machine, and saga compensation
 - **Logging, Observability, and Compliance** (FR-051 to FR-060): Structured JSON logging, log level filtering, error enrichment, safe serialization, and audit trail
 - **Policy-as-Code and Schema Validation** (FR-061 to FR-065): YAML policy definitions, JSON Schema validation, CI integration, and schema-driven payload verification
+- **NSX Hygiene and Orphan Cleanup** (FR-071 to FR-085): Orphan group cleanup, stale rule management, phantom VM detection, stale tag remediation, and coordinated hygiene sweeps
 
 ---
 
@@ -45,7 +47,7 @@ Each requirement entry in the matrices below includes the following fields:
 
 | Field | Description |
 |-------|-------------|
-| **FR-ID** | Unique requirement identifier from the BRD (FR-001 through FR-065) |
+| **FR-ID** | Unique requirement identifier from the BRD (FR-001 through FR-085) |
 | **Requirement** | Concise statement of the functional requirement |
 | **Design Component** | The class, module, or subsystem responsible for fulfilling the requirement |
 | **Source File** | The primary implementation file (relative to repository root) |
@@ -321,7 +323,45 @@ The `snow-vro-payload.schema.json` schema defines:
 
 ---
 
-## 10. Cross-Cutting Traceability Summary
+## 10. FR-071 through FR-085: NSX Hygiene and Orphan Cleanup
+
+These requirements define the automated hygiene operations that detect and remediate orphaned NSX groups, stale DFW rules, phantom VMs, stale tags, and unregistered workloads. The hygiene subsystem runs as a coordinated sweep orchestrated by the NSXHygieneOrchestrator, with each task supporting a dryRun mode for safe pre-execution reporting.
+
+| FR-ID | Requirement | Design Component | Source File | Test Case | Acceptance Criteria |
+|-------|------------|-----------------|-------------|-----------|-------------------|
+| FR-071 | OrphanGroupCleaner sweep identifies empty groups | OrphanGroupCleaner | `src/vro/actions/groups/OrphanGroupCleaner.js` | TC-071 | Empty groups detected within configurable age threshold |
+| FR-072 | OrphanGroupCleaner archives group definitions before deletion | OrphanGroupCleaner | `src/vro/actions/groups/OrphanGroupCleaner.js` | TC-072 | Group JSON archived before delete |
+| FR-073 | OrphanGroupCleaner respects minimum age threshold | OrphanGroupCleaner | `src/vro/actions/groups/OrphanGroupCleaner.js` | TC-073 | Groups younger than minAgeHours skipped |
+| FR-074 | StaleRuleReaper classifies rules (stale/expired/unmanaged/active) | StaleRuleReaper | `src/vro/actions/dfw/StaleRuleReaper.js` | TC-074 | Each rule assigned classification |
+| FR-075 | StaleRuleReaper disables (not deletes) stale rules | StaleRuleReaper | `src/vro/actions/dfw/StaleRuleReaper.js` | TC-075 | Rules disabled via PATCH, not deleted |
+| FR-076 | PolicyDeployer.cleanupEmptySections removes empty policy sections | PolicyDeployer | `src/vro/actions/dfw/PolicyDeployer.js` | TC-076 | Empty sections deleted, system defaults skipped |
+| FR-077 | StaleTagRemediator re-applies CMDB tags to stale-tagged VMs | StaleTagRemediator | `src/vro/actions/tags/StaleTagRemediator.js` | TC-077 | Corrected tags applied from CMDB |
+| FR-078 | StaleTagRemediator flags VMs without CMDB records | StaleTagRemediator | `src/vro/actions/tags/StaleTagRemediator.js` | TC-078 | VMs flagged for quarantine or manual review |
+| FR-079 | PhantomVMDetector cross-references NSX vs vCenter inventory | PhantomVMDetector | `src/vro/actions/lifecycle/PhantomVMDetector.js` | TC-079 | Phantom VMs identified by set difference |
+| FR-080 | UntaggedVMScanner.scanWithCMDBCrossRef enriches scan with CMDB status | UntaggedVMScanner | `src/vro/actions/tags/UntaggedVMScanner.js` | TC-080 | VMs classified as registered/unregistered |
+| FR-081 | UnregisteredVMOnboarder creates CMDB CIs for unregistered VMs | UnregisteredVMOnboarder | `src/vro/actions/lifecycle/UnregisteredVMOnboarder.js` | TC-081 | CI created in ServiceNow |
+| FR-082 | NSXHygieneOrchestrator runs all cleanup tasks in coordinated sweep | NSXHygieneOrchestrator | `src/vro/actions/lifecycle/NSXHygieneOrchestrator.js` | TC-082 | All tasks execute in sequence |
+| FR-083 | NSXHygieneOrchestrator creates ServiceNow incidents for manual items | NSXHygieneOrchestrator | `src/vro/actions/lifecycle/NSXHygieneOrchestrator.js` | TC-083 | Incidents created for manual-review items |
+| FR-084 | Day0Orchestrator detects rebuild scenarios and purges stale tags | Day0Orchestrator | `src/vro/actions/lifecycle/Day0Orchestrator.js` | TC-084 | Stale tags purged from old MoRef |
+| FR-085 | All hygiene operations support dryRun mode | All hygiene modules | multiple | TC-085 | dryRun=true produces reports without changes |
+
+### Design Notes — NSX Hygiene and Orphan Cleanup
+
+The hygiene subsystem addresses the accumulation of stale, orphaned, and inconsistent objects that naturally occurs in long-lived NSX environments. The design follows several key principles:
+
+1. **Archive Before Mutate**: The OrphanGroupCleaner and StaleRuleReaper archive the full JSON definition of any object before modifying or removing it. This provides an audit trail for compliance and enables rollback if a cleanup operation removes an object that was still needed.
+
+2. **Disable Rather Than Delete**: The StaleRuleReaper disables stale rules via PATCH (setting the rule's `disabled` property to `true`) rather than deleting them. Disabled rules remain visible in the NSX policy table for auditing and can be re-enabled if needed. Deletion is a destructive, irreversible operation that complicates forensic analysis and compliance reviews.
+
+3. **Cross-Source Verification**: The PhantomVMDetector compares the VM inventory from two independent sources (NSX fabric API and vCenter API) to identify phantom VMs -- VMs that exist in one system but not the other. This addresses the single-source-of-truth problem where relying on either system alone misses discrepancies caused by failed decommissions, partial migrations, or manual interventions.
+
+4. **Sequential Execution**: The NSXHygieneOrchestrator runs cleanup tasks in a fixed sequence (phantom detection, orphan group cleanup, stale rule reaping, policy section cleanup, stale tag remediation, unregistered VM onboarding) rather than in parallel. This prevents resource contention on the NSX Manager API and respects dependency ordering -- for example, orphan groups must be identified before stale rules that reference them can be classified.
+
+5. **DryRun Safety Net**: Every hygiene operation supports a `dryRun` mode that executes the full detection and classification logic but skips all mutating API calls. The dryRun output produces the same structured report as a live run, enabling operators to review the planned changes before committing them.
+
+---
+
+## 11. Cross-Cutting Traceability Summary
 
 The following table provides a high-level summary of the traceability between functional areas, components, and NFRs.
 
@@ -334,18 +374,19 @@ The following table provides a high-level summary of the traceability between fu
 | Error Handling and Resilience | FR-041 — FR-050 | ErrorFactory, RetryHandler, CircuitBreaker, SagaCoordinator | NFR-010 (Graceful degradation), NFR-011 (Auto recovery), NFR-028 (Error taxonomy) | TC-029 — TC-040 |
 | Logging and Observability | FR-051 — FR-060 | Logger, CorrelationContext, DeadLetterQueue | NFR-020 (RITM audit), NFR-021 (7-year retention), NFR-032 (Structured logging) | TC-041 — TC-044 |
 | Policy-as-Code | FR-061 — FR-065 | YAML policies, PayloadValidator, CI pipeline | NFR-023 (Peer review), NFR-046 (JSON Schema), NFR-047 (YAML validation) | TC-048, TC-049 |
+| NSX Hygiene and Orphan Cleanup | FR-071 — FR-085 | OrphanGroupCleaner, StaleRuleReaper, PolicyDeployer, StaleTagRemediator, PhantomVMDetector, UntaggedVMScanner, UnregisteredVMOnboarder, NSXHygieneOrchestrator, Day0Orchestrator | NFR-014 (Idempotency), NFR-020 (RITM audit), NFR-032 (Structured logging) | TC-071 — TC-085 |
 
 ### Requirement Coverage Statistics
 
 | Metric | Count |
 |--------|-------|
-| Total Functional Requirements | 65 |
-| Requirements with identified design component | 65 (100%) |
-| Requirements with source file reference | 65 (100%) |
-| Requirements with test case reference | 65 (100%) |
-| Requirements with acceptance criteria | 65 (100%) |
-| Unique test cases referenced | 50 |
-| Unique source files referenced | 18 |
+| Total Functional Requirements | 80 |
+| Requirements with identified design component | 80 (100%) |
+| Requirements with source file reference | 80 (100%) |
+| Requirements with test case reference | 80 (100%) |
+| Requirements with acceptance criteria | 80 (100%) |
+| Unique test cases referenced | 65 |
+| Unique source files referenced | 26 |
 
 ---
 
@@ -414,18 +455,19 @@ Optional tags for governance and financial tracking:
 | Logging and Observability | FR-051 -- FR-060 | Logger, CorrelationContext, DeadLetterQueue | NFR-020 (RITM audit), NFR-021 (7-year retention), NFR-032 (Structured logging) | TC-041 -- TC-044 |
 | Policy-as-Code | FR-061 -- FR-065 | YAML policies, PayloadValidator, CI pipeline | NFR-023 (Peer review), NFR-046 (JSON Schema), NFR-047 (YAML validation) | TC-048, TC-049 |
 | CMDB Validation and Rule Lifecycle | FR-066 -- FR-073 | CMDBValidator, RuleLifecycleManager, RuleRegistry, RuleReviewScheduler, MigrationBulkTagger, cmdbTagSyncRule | NFR-020 (Audit), NFR-022 (Compliance), NFR-024 (Traceability) | TC-066 -- TC-073 |
+| NSX Hygiene and Orphan Cleanup | FR-071 -- FR-085 | OrphanGroupCleaner, StaleRuleReaper, PolicyDeployer, StaleTagRemediator, PhantomVMDetector, UntaggedVMScanner, UnregisteredVMOnboarder, NSXHygieneOrchestrator, Day0Orchestrator | NFR-014 (Idempotency), NFR-020 (RITM audit), NFR-032 (Structured logging) | TC-071 -- TC-085 |
 
 ### Requirement Coverage Statistics (Updated)
 
 | Metric | Count |
 |--------|-------|
-| Total Functional Requirements | 73 |
-| Requirements with identified design component | 73 (100%) |
-| Requirements with source file reference | 73 (100%) |
-| Requirements with test case reference | 73 (100%) |
-| Requirements with acceptance criteria | 73 (100%) |
-| Unique test cases referenced | 58 |
-| Unique source files referenced | 24 |
+| Total Functional Requirements | 88 |
+| Requirements with identified design component | 88 (100%) |
+| Requirements with source file reference | 88 (100%) |
+| Requirements with test case reference | 88 (100%) |
+| Requirements with acceptance criteria | 88 (100%) |
+| Unique test cases referenced | 73 |
+| Unique source files referenced | 30 |
 
 ---
 
