@@ -13,6 +13,7 @@ and rule lifecycle management.
 | RuleLifecycleManager    | src/vro/actions/dfw/RuleLifecycleManager.js        | Manages rule creation, modification, expiration, and deactivation  |
 | RuleRegistry            | src/vro/actions/dfw/RuleRegistry.js                | Maintains a central registry of all DFW rules with metadata        |
 | RuleReviewScheduler     | src/vro/actions/dfw/RuleReviewScheduler.js         | Schedules periodic rule reviews and notifies rule owners           |
+| StaleRuleReaper         | src/vro/actions/dfw/StaleRuleReaper.js             | Identifies and disables stale, expired, or unmanaged DFW rules     |
 
 ## Module Path
 

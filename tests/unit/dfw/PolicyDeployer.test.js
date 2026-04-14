@@ -361,6 +361,111 @@ describe('PolicyDeployer', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // cleanupEmptySections
+  // ---------------------------------------------------------------------------
+  describe('cleanupEmptySections', () => {
+    it('identifies empty policy sections in dry run', async () => {
+      restClient.get.mockResolvedValue({
+        body: {
+          results: [
+            { id: 'policy-empty', display_name: 'Empty-Policy', rules: [{ disabled: true }] },
+            { id: 'policy-active', display_name: 'Active-Policy', rules: [{ disabled: false, action: 'ALLOW' }] },
+            { id: 'policy-system', display_name: 'Default-L3', rules: [] }
+          ]
+        }
+      });
+
+      const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: true });
+
+      expect(result.site).toBe('NDCNG');
+      expect(result.totalSections).toBe(3);
+      expect(result.emptySections).toBe(1); // policy-empty (all rules disabled)
+      expect(result.skippedSections).toBe(1); // Default-L3 (system default)
+      expect(result.deletedSections).toBe(0); // dry run
+      expect(result.archived).toHaveLength(1);
+    });
+
+    it('deletes empty sections when not dry run', async () => {
+      restClient.get.mockResolvedValue({
+        body: {
+          results: [
+            { id: 'policy-empty', display_name: 'Empty-Policy', rules: [] }
+          ]
+        }
+      });
+      restClient.delete.mockResolvedValue({ status: 200 });
+
+      const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: false });
+
+      expect(result.deletedSections).toBe(1);
+      expect(restClient.delete).toHaveBeenCalledWith(
+        expect.stringContaining('/security-policies/policy-empty')
+      );
+    });
+
+    it('skips system-default policies', async () => {
+      restClient.get.mockResolvedValue({
+        body: {
+          results: [
+            { id: 'default-l3', display_name: 'Default Layer3 Section', rules: [] },
+            { id: 'infra-1', display_name: 'Infrastructure Monitoring', rules: [] }
+          ]
+        }
+      });
+
+      const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: false });
+
+      expect(result.skippedSections).toBe(2);
+      expect(result.deletedSections).toBe(0);
+    });
+
+    it('archives policy definitions before deletion', async () => {
+      restClient.get.mockResolvedValue({
+        body: {
+          results: [
+            { id: 'policy-empty', display_name: 'Empty-Policy', rules: [], category: 'Application' }
+          ]
+        }
+      });
+      restClient.delete.mockResolvedValue({ status: 200 });
+
+      const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: false });
+
+      expect(result.archived).toHaveLength(1);
+      expect(result.archived[0].policyId).toBe('policy-empty');
+      expect(result.archived[0].definition).toBeDefined();
+    });
+
+    it('handles deletion failure gracefully', async () => {
+      restClient.get.mockResolvedValue({
+        body: {
+          results: [
+            { id: 'policy-fail', display_name: 'Fail-Policy', rules: [] }
+          ]
+        }
+      });
+      restClient.delete.mockRejectedValue(new Error('Permission denied'));
+
+      const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: false });
+
+      expect(result.deletedSections).toBe(0);
+      expect(result.skippedSections).toBe(1);
+    });
+
+    it('throws DFW-8007 when site is missing', async () => {
+      await expect(deployer.cleanupEmptySections(null))
+        .rejects.toThrow('[DFW-8007]');
+    });
+
+    it('throws DFW-8007 when fetch fails', async () => {
+      restClient.get.mockRejectedValue(new Error('NSX unreachable'));
+
+      await expect(deployer.cleanupEmptySections('NDCNG'))
+        .rejects.toThrow('[DFW-8007]');
+    });
+  });
+
   describe('_sanitizePolicyName', () => {
     it('lowercases and replaces spaces', () => {
       expect(PolicyDeployer._sanitizePolicyName('My Policy Name'))

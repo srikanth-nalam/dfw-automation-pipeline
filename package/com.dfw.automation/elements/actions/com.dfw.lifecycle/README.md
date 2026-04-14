@@ -21,6 +21,9 @@ detection, and migration workflows.
 | QuarantineOrchestrator         | src/vro/actions/lifecycle/QuarantineOrchestrator.js          | Emergency quarantine — isolates compromised VMs via DFW rules        |
 | SagaCoordinator                | src/vro/actions/lifecycle/SagaCoordinator.js                 | Distributed saga pattern for multi-step workflow compensation        |
 | DeadLetterQueue                | src/vro/actions/lifecycle/DeadLetterQueue.js                 | Failed request capture for manual review and retry                   |
+| PhantomVMDetector              | src/vro/actions/lifecycle/PhantomVMDetector.js               | Detects VMs present in NSX but absent from vCenter                   |
+| UnregisteredVMOnboarder        | src/vro/actions/lifecycle/UnregisteredVMOnboarder.js         | Onboards unregistered VMs discovered during hygiene sweeps           |
+| NSXHygieneOrchestrator         | src/vro/actions/lifecycle/NSXHygieneOrchestrator.js          | Orchestrates full hygiene sweep across all cleanup sub-modules       |
 
 ## Module Path
 

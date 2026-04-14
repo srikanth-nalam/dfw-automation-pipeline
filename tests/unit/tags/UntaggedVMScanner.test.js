@@ -138,4 +138,64 @@ describe('UntaggedVMScanner', () => {
     expect(report).toHaveProperty('coveragePercent');
     expect(report).toHaveProperty('untaggedVMs');
   });
+
+  // ---------------------------------------------------------------------------
+  // scanWithCMDBCrossRef
+  // ---------------------------------------------------------------------------
+  describe('scanWithCMDBCrossRef', () => {
+    beforeEach(() => {
+      deps.snowAdapter = {
+        toCallbackPayload: jest.fn()
+      };
+      deps.tagOperations.getTags = jest.fn()
+        .mockResolvedValueOnce({ Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' })
+        .mockResolvedValueOnce({ AppCI: 'APP002' })
+        .mockResolvedValueOnce({});
+      scanner = new UntaggedVMScanner(deps);
+    });
+
+    test('classifies VMs by CMDB registration status', async () => {
+      // vm-1: tagged + registered (skip), vm-2: untagged + registered, vm-3: untagged + unregistered
+      deps.snowAdapter.toCallbackPayload
+        .mockResolvedValueOnce({ ciStatus: 'Active' }) // vm-1
+        .mockResolvedValueOnce({ ciStatus: 'Active' }) // vm-2
+        .mockResolvedValueOnce({ ciStatus: 'not_found' }); // vm-3
+
+      const report = await scanner.scanWithCMDBCrossRef('NDCNG');
+
+      expect(report).toHaveProperty('classifiedVMs');
+      expect(report).toHaveProperty('untaggedRegistered');
+      expect(report).toHaveProperty('untaggedUnregistered');
+      expect(report).toHaveProperty('taggedUnregistered');
+      expect(report.untaggedRegistered).toBe(1); // vm-2
+      expect(report.untaggedUnregistered).toBe(1); // vm-3
+    });
+
+    test('handles CMDB lookup failure gracefully', async () => {
+      deps.snowAdapter.toCallbackPayload
+        .mockRejectedValueOnce(new Error('CMDB timeout'))
+        .mockResolvedValueOnce({ ciStatus: 'Active' })
+        .mockResolvedValueOnce({ ciStatus: 'not_found' });
+
+      const report = await scanner.scanWithCMDBCrossRef('NDCNG');
+
+      // Failed lookup should not crash
+      expect(report.classifiedVMs).toBeDefined();
+      expect(deps.logger.warn).toHaveBeenCalled();
+    });
+
+    test('includes existing scan report data', async () => {
+      deps.snowAdapter.toCallbackPayload
+        .mockResolvedValueOnce({ ciStatus: 'Active' })
+        .mockResolvedValueOnce({ ciStatus: 'Active' })
+        .mockResolvedValueOnce({ ciStatus: 'Active' });
+
+      const report = await scanner.scanWithCMDBCrossRef('NDCNG');
+
+      expect(report).toHaveProperty('totalVMs');
+      expect(report).toHaveProperty('fullyTagged');
+      expect(report).toHaveProperty('partiallyTagged');
+      expect(report).toHaveProperty('untagged');
+    });
+  });
 });

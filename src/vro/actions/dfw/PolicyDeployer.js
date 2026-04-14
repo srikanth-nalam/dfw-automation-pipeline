@@ -678,6 +678,118 @@ class PolicyDeployer {
     };
   }
 
+  /**
+   * Identifies and removes DFW security policy sections that contain zero active
+   * (non-disabled) rules. System-default policies (prefixed with "Default" or
+   * "Infrastructure") are always skipped.
+   *
+   * @async
+   * @param {string} site - Site code (e.g. `'NDCNG'`).
+   * @param {Object} [options={}] - Cleanup options.
+   * @param {boolean} [options.dryRun=true] - If true, report only without deleting.
+   * @returns {Promise<{site: string, timestamp: string, totalSections: number,
+   *   emptySections: number, deletedSections: number, skippedSections: number,
+   *   archived: Array}>}
+   *
+   * @throws {Error} DFW-8007 when the cleanup operation fails.
+   *
+   * @example
+   * const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: false });
+   */
+  async cleanupEmptySections(site, options = {}) {
+    const dryRun = options.dryRun !== false;
+
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8007] site is required and must be a non-empty string.');
+    }
+
+    this._logger.info(
+      `Starting empty section cleanup for site "${site}" (dryRun=${dryRun}).`
+    );
+
+    const endpoints = this._config.getEndpointsForSite(site);
+    const url = `${endpoints.nsxUrl}/policy/api/v1/infra/domains/default/security-policies`;
+
+    let policies;
+    try {
+      const response = await this._restClient.get(url);
+      const body = response.body || response;
+      policies = body.results || body || [];
+    } catch (err) {
+      throw new Error(
+        `[DFW-8007] Failed to fetch security policies for cleanup: ${err.message}`
+      );
+    }
+
+    const totalSections = policies.length;
+    let emptySections = 0;
+    let deletedSections = 0;
+    let skippedSections = 0;
+    const archived = [];
+
+    for (const policy of policies) {
+      const policyId = policy.id || policy.display_name || '';
+      const policyName = policy.display_name || policyId;
+
+      // Skip system-default policies
+      if (policyName.startsWith('Default') || policyName.startsWith('Infrastructure')) {
+        skippedSections += 1;
+        continue;
+      }
+
+      // Count active (non-disabled) rules
+      const rules = policy.rules || [];
+      const activeRuleCount = rules.filter(r => r.disabled !== true).length;
+
+      if (activeRuleCount > 0) {
+        continue;
+      }
+
+      emptySections += 1;
+
+      // Archive the policy definition
+      archived.push({
+        archivedAt: new Date().toISOString(),
+        policyId,
+        displayName: policyName,
+        definition: JSON.parse(JSON.stringify(policy))
+      });
+
+      // Delete if not dry run
+      if (!dryRun) {
+        const deleteUrl =
+          `${endpoints.nsxUrl}/policy/api/v1/infra/domains/default/` +
+          `security-policies/${encodeURIComponent(policyId)}`;
+
+        try {
+          await this._restClient.delete(deleteUrl);
+          deletedSections += 1;
+          this._logger.info(`Deleted empty policy section "${policyName}".`);
+        } catch (delErr) {
+          this._logger.error(
+            `Failed to delete empty policy section "${policyName}": ${delErr.message}`
+          );
+          skippedSections += 1;
+        }
+      }
+    }
+
+    this._logger.info(
+      `Empty section cleanup completed: ${emptySections} empty of ${totalSections} total, ` +
+      `${deletedSections} deleted, ${skippedSections} skipped.`
+    );
+
+    return {
+      site,
+      timestamp: new Date().toISOString(),
+      totalSections,
+      emptySections,
+      deletedSections,
+      skippedSections,
+      archived
+    };
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------

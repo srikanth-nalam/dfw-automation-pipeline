@@ -10,6 +10,7 @@ Actions for NSX-T tag lifecycle management, cardinality enforcement, and complia
 | TagCardinalityEnforcer    | src/vro/actions/tags/TagCardinalityEnforcer.js  | Validates single-value vs multi-value cardinality constraints     |
 | TagPropagationVerifier    | src/vro/actions/tags/TagPropagationVerifier.js  | Confirms tags propagated to NSX-T after vCenter assignment        |
 | UntaggedVMScanner         | src/vro/actions/tags/UntaggedVMScanner.js       | Discovers VMs missing required tags from the 5-tag model          |
+| StaleTagRemediator        | src/vro/actions/tags/StaleTagRemediator.js      | Detects and remediates orphaned or stale tags on VMs              |
 
 ## Module Path
 

@@ -8,6 +8,7 @@ Actions for NSX-T dynamic security group membership verification and reconciliat
 |-----------------------------|--------------------------------------------------------|-------------------------------------------------------------------|
 | GroupMembershipVerifier     | src/vro/actions/groups/GroupMembershipVerifier.js      | Validates that tagged VMs appear in expected NSX security groups   |
 | GroupReconciler             | src/vro/actions/groups/GroupReconciler.js              | Reconciles group membership drift and reports discrepancies        |
+| OrphanGroupCleaner          | src/vro/actions/groups/OrphanGroupCleaner.js           | Detects and removes empty security groups not referenced by rules  |
 
 ## Module Path
 

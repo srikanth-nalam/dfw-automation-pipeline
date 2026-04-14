@@ -1,0 +1,13 @@
+{
+  "name": "DFW NSX Hygiene Sweep",
+  "description": "Weekly NSX hygiene sweep for orphan groups, stale rules, phantom VMs, and unregistered VM onboarding",
+  "schedule": "0 2 * * 0",
+  "active": true,
+  "run_as": "svc_dfw_automation",
+  "payload": {
+    "action": "hygienesSweep",
+    "scope": "FULL",
+    "dryRun": false,
+    "callbackUrl": "/api/x_dfw/dfw_automation/callback"
+  }
+}

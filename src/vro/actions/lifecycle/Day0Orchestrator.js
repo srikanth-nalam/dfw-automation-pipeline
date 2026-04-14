@@ -612,18 +612,34 @@ class Day0Orchestrator extends LifecycleOrchestrator {
     const retiredStatuses = ['retired', 'decommissioned'];
 
     if (retiredStatuses.includes(ciStatus.toLowerCase())) {
-      this.logger.info('Existing VM has retired/decommissioned CI, proceeding with provisioning', {
-        correlationId: payload.correlationId,
-        vmName: payload.vmName,
-        oldVmId,
-        oldCiStatus: ciStatus,
-        component: 'Day0Orchestrator'
-      });
+      // Rebuild scenario: same name, decommissioned CI
+      const rebuildResult = await this._handleRebuildScenario(existingVm, payload, payload.site, endpoints);
       return {
         existingVmFound: true,
         action: 'retag',
         oldVmId,
-        oldCiStatus: ciStatus
+        oldCiStatus: ciStatus,
+        rebuildDetected: true,
+        staleTagsPurged: rebuildResult.tagsPurged
+      };
+    }
+
+    if (ciStatus === 'unknown') {
+      // No CI exists — unregistered VM with same name
+      this.logger.warn('Unregistered VM with same name detected', {
+        correlationId: payload.correlationId,
+        vmName: payload.vmName,
+        oldVmId,
+        component: 'Day0Orchestrator'
+      });
+      const rebuildResult = await this._handleRebuildScenario(existingVm, payload, payload.site, endpoints);
+      return {
+        existingVmFound: true,
+        action: 'retag',
+        oldVmId,
+        oldCiStatus: ciStatus,
+        rebuildDetected: false,
+        staleTagsPurged: rebuildResult.tagsPurged
       };
     }
 
@@ -631,6 +647,61 @@ class Day0Orchestrator extends LifecycleOrchestrator {
       `[DFW-6210] VM name "${payload.vmName}" already exists with active CMDB CI ` +
       `(status: "${ciStatus}", vmId: "${oldVmId}"). Manual review required.`
     );
+  }
+
+  /**
+   * Handles a rebuild scenario where an existing VM with a decommissioned or
+   * absent CI is detected. Purges stale NSX tags from the old VM MoRef.
+   *
+   * @param {Object} existingVM - Existing VM record from vCenter.
+   * @param {Object} payload - The request payload.
+   * @param {string} site - Site code.
+   * @param {Object} endpoints - Resolved site endpoints.
+   * @returns {Promise<{tagsPurged: boolean, oldTags: Object}>}
+   */
+  async _handleRebuildScenario(existingVM, payload, site, _endpoints) {
+    const oldVmId = existingVM.vm || existingVM.vmId || existingVM.id;
+
+    this.logger.warn('[DFW-6211] Rebuild detected — purging stale tags from old VM MoRef', {
+      correlationId: payload.correlationId,
+      vmName: payload.vmName,
+      oldVmId,
+      component: 'Day0Orchestrator'
+    });
+
+    let oldTags = {};
+    let tagsPurged = false;
+
+    try {
+      oldTags = await this.tagOperations.getCurrentTags(oldVmId, site);
+
+      if (oldTags && Object.keys(oldTags).length > 0) {
+        await this.tagOperations.removeTags(oldVmId, Object.keys(oldTags), site);
+        tagsPurged = true;
+
+        this.logger.info('Stale tags purged from old VM MoRef', {
+          correlationId: payload.correlationId,
+          oldVmId,
+          purgedCategories: Object.keys(oldTags),
+          component: 'Day0Orchestrator'
+        });
+      } else {
+        this.logger.info('No stale tags found on old VM MoRef', {
+          correlationId: payload.correlationId,
+          oldVmId,
+          component: 'Day0Orchestrator'
+        });
+      }
+    } catch (err) {
+      this.logger.warn('Failed to purge stale tags from old VM MoRef', {
+        correlationId: payload.correlationId,
+        oldVmId,
+        errorMessage: err.message,
+        component: 'Day0Orchestrator'
+      });
+    }
+
+    return { tagsPurged, oldTags };
   }
 
   // ---------------------------------------------------------------------------

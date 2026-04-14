@@ -75,6 +75,8 @@ class UntaggedVMScanner {
     this.logger = dependencies.logger;
     /** @private */
     this.configLoader = dependencies.configLoader;
+    /** @private */
+    this.snowAdapter = dependencies.snowAdapter || null;
   }
 
   /**
@@ -252,6 +254,110 @@ class UntaggedVMScanner {
     }
 
     return suggestions;
+  }
+
+  /**
+   * Extends scanForUntaggedVMs to also check CMDB registration status for each VM.
+   * Classifies VMs as UNTAGGED_REGISTERED, UNTAGGED_UNREGISTERED, or TAGGED_UNREGISTERED.
+   *
+   * @async
+   * @param {string} site - Site code (NDCNG or TULNG).
+   * @returns {Promise<Object>} Enriched scan report with CMDB classification.
+   */
+  async scanWithCMDBCrossRef(site) {
+    this.logger.info('Starting CMDB cross-reference scan', {
+      site,
+      component: 'UntaggedVMScanner'
+    });
+
+    // Step 1: Run existing scan
+    const scanReport = await this.scanForUntaggedVMs(site);
+
+    // Step 2: Get full VM list for tagged-but-unregistered check
+    const endpoints = this.configLoader.getEndpointsForSite(site);
+    const allVMs = await this._getAllVMs(endpoints);
+
+    const classifiedVMs = [];
+
+    // Step 2-3: For each VM, query CMDB
+    for (const vm of allVMs) {
+      const vmId = vm.vm || vm.vmId;
+      const vmName = vm.name || vm.vmName || vmId;
+
+      let cmdbRegistered = false;
+      try {
+        if (this.snowAdapter) {
+          const cmdbResult = await this.snowAdapter.toCallbackPayload({
+            action: 'getCIStatus',
+            vmId,
+            vmName
+          });
+          cmdbRegistered = !!(cmdbResult && cmdbResult.ciStatus && cmdbResult.ciStatus !== 'not_found');
+        }
+      } catch (err) {
+        this.logger.warn('CMDB lookup failed for VM during cross-ref', {
+          vmId,
+          vmName,
+          errorMessage: err.message,
+          component: 'UntaggedVMScanner'
+        });
+      }
+
+      // Determine tag status
+      const untaggedEntry = scanReport.untaggedVMs.find(u => u.vmId === vmId);
+      const isUntagged = !!untaggedEntry;
+
+      // Step 3: Classify
+      let classification;
+      if (isUntagged && cmdbRegistered) {
+        classification = 'UNTAGGED_REGISTERED';
+      } else if (isUntagged && !cmdbRegistered) {
+        classification = 'UNTAGGED_UNREGISTERED';
+      } else if (!isUntagged && !cmdbRegistered) {
+        classification = 'TAGGED_UNREGISTERED';
+      } else {
+        continue; // tagged and registered — skip
+      }
+
+      let currentTags = {};
+      if (untaggedEntry) {
+        currentTags = untaggedEntry.currentTags || {};
+      } else {
+        try {
+          currentTags = await this.tagOperations.getTags(vmId, site);
+        } catch (err) {
+          // Best effort
+        }
+      }
+
+      classifiedVMs.push({
+        vmId,
+        vmName,
+        classification,
+        cmdbRegistered,
+        currentTags,
+        missingCategories: untaggedEntry ? untaggedEntry.missingCategories : [],
+        suggestions: untaggedEntry ? untaggedEntry.suggestions : []
+      });
+    }
+
+    const result = {
+      ...scanReport,
+      classifiedVMs,
+      untaggedRegistered: classifiedVMs.filter(v => v.classification === 'UNTAGGED_REGISTERED').length,
+      untaggedUnregistered: classifiedVMs.filter(v => v.classification === 'UNTAGGED_UNREGISTERED').length,
+      taggedUnregistered: classifiedVMs.filter(v => v.classification === 'TAGGED_UNREGISTERED').length
+    };
+
+    this.logger.info('CMDB cross-reference scan completed', {
+      site,
+      untaggedRegistered: result.untaggedRegistered,
+      untaggedUnregistered: result.untaggedUnregistered,
+      taggedUnregistered: result.taggedUnregistered,
+      component: 'UntaggedVMScanner'
+    });
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
