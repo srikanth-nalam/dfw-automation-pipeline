@@ -505,7 +505,7 @@ class LifecycleOrchestrator {
       ? requestType.trim()
       : '';
 
-    /* eslint-disable global-require */
+     
     switch (normalised) {
       case 'Day0': {
         const Day0Orchestrator = require('./Day0Orchestrator');
@@ -537,7 +537,7 @@ class LifecycleOrchestrator {
           'Valid types: Day0, Day2, DayN, Quarantine, MigrationBulkTag, RuleLifecycle'
         );
     }
-    /* eslint-enable global-require */
+     
   }
 }
 

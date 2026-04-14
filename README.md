@@ -1,7 +1,7 @@
 # NSX DFW Automation Pipeline
 
 ![CI](https://img.shields.io/github/actions/workflow/status/srikanth-nalam/dfw-automation-pipeline/ci.yml?branch=main&label=CI)
-![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green)
 
@@ -244,10 +244,12 @@ npm run test:unit
 npm run test:integration
 
 # Coverage targets:
-#   Lines:      80%
-#   Branches:   70%
-#   Functions:  80%
-#   Statements: 80%
+#   Lines:      95%+
+#   Branches:   95%+
+#   Functions:  95%+
+#   Statements: 95%+
+#
+# Test suites: 54 | Tests: 1161+
 ```
 
 Test results and coverage reports are written to the `coverage/` directory in `text`, `lcov`, and `clover` formats.

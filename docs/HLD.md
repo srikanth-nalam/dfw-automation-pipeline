@@ -518,6 +518,65 @@ The Migration Verification Flow ensures that VM security posture is preserved af
 
 **Flow**: Post-vMotion event detected -> Read expected tags from CMDB -> Check tags at destination host -> Re-apply missing tags if needed -> Verify security group membership restored -> Verify DFW policy enforcement at new location
 
+### Monitor-Mode Deployment Flow
+
+The Monitor-Mode Deployment Flow implements a two-phase policy rollout strategy that reduces the risk of production impact from new or modified DFW policies. Rather than deploying rules in enforcement mode immediately, policies are first deployed in monitor (observation) mode where all traffic is allowed but logged, enabling operators to validate correctness before enforcement.
+
+**Flow**: Policy definition submitted -> PolicyDeployer.deployMonitorMode() deploys rules with ALLOW+logging -> Operators observe traffic logs during review period (48-72 hours) -> False positives identified and policy adjusted -> PolicyDeployer.promoteToEnforce() restores original rule actions -> DFW enforces intended ALLOW/DROP/REJECT actions
+
+```mermaid
+sequenceDiagram
+    participant OP as Operator
+    participant PD as PolicyDeployer
+    participant NSX as NSX Manager
+    participant SIEM as Splunk / ELK
+    OP->>PD: deployMonitorMode(policyDef, site)
+    PD->>PD: Rewrite actions to ALLOW, enable logging
+    PD->>PD: Store intended actions as rule tags
+    PD->>NSX: PATCH /policy/api/v1/infra/domains/{domain}/security-policies/{id}
+    NSX-->>PD: 200 OK (policy deployed in monitor mode)
+    PD-->>OP: { deployed: true, mode: 'MONITOR' }
+    Note over NSX,SIEM: Observation period (48-72 hours)
+    NSX->>SIEM: DFW log entries for all matched traffic
+    OP->>SIEM: Review traffic patterns, identify false positives
+    OP->>PD: promoteToEnforce(policyId, site)
+    PD->>NSX: GET current rules, restore intended actions
+    PD->>NSX: PATCH rules with original ALLOW/DROP/REJECT actions
+    NSX-->>PD: 200 OK (policy enforced)
+    PD-->>OP: { promoted: true, mode: 'ENFORCE' }
+```
+
+### Drift Trend Analysis Flow
+
+The Drift Trend Analysis Flow extends the standard drift detection scan with historical tracking and trend computation. After each scan, results are persisted to both local storage and ServiceNow, enabling operators to identify recurring drift patterns, chronic offenders, and systemic issues that cause tag inconsistency.
+
+**Flow**: Scheduled drift scan triggered -> DriftDetectionWorkflow.executeScan() compares CMDB vs NSX tags -> DriftDetectionWorkflow.storeScanHistory() persists results locally and to ServiceNow -> DriftDetectionWorkflow.analyzeDriftTrend() computes per-VM and per-category drift frequency over lookback window -> DriftDetectionWorkflow.generateDriftSummary() produces trend report with recommendations
+
+```mermaid
+sequenceDiagram
+    participant CRON as Scheduler
+    participant DDW as DriftDetectionWorkflow
+    participant CMDB as ServiceNow CMDB
+    participant NSX as NSX Manager
+    participant STORE as Local Storage
+    participant SNOW as ServiceNow
+    CRON->>DDW: executeScan(site, { autoRemediate: true })
+    DDW->>CMDB: Query expected tag state for all managed VMs
+    CMDB-->>DDW: Expected tags per VM
+    DDW->>NSX: GET /fabric/virtual-machines tags (batch)
+    NSX-->>DDW: Actual tags per VM
+    DDW->>DDW: Compute drift delta per VM
+    DDW->>DDW: Auto-remediate drifted tags (if enabled)
+    DDW->>DDW: storeScanHistory(scanResult)
+    DDW->>STORE: Write scan record (local, fast)
+    DDW->>SNOW: POST /u_dfw_drift_history (best-effort sync)
+    DDW->>DDW: analyzeDriftTrend(site, { lookbackDays: 30 })
+    STORE-->>DDW: Historical scan records
+    DDW->>DDW: Compute per-VM drift frequency, category patterns
+    DDW->>DDW: generateDriftSummary(site)
+    DDW-->>CRON: { scannedVMs, driftFound, trendingVMs, summary }
+```
+
 ---
 
 ## 5. Deployment Topology

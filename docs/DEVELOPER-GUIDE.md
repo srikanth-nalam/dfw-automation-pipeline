@@ -9,7 +9,10 @@ This guide provides step-by-step instructions for deploying the NSX DFW Automati
 1. [Prerequisites Checklist](#1-prerequisites-checklist)
 2. [Where to Deploy Each Component](#2-where-to-deploy-each-component)
 3. [Test Data Setup for Demos](#3-test-data-setup-for-demos)
-4. [Troubleshooting Common Setup Issues](#4-troubleshooting-common-setup-issues)
+4. [Monitor-Mode Deployment](#4-monitor-mode-deployment)
+5. [Drift Trend Analysis](#5-drift-trend-analysis)
+6. [Running Tests](#6-running-tests)
+7. [Troubleshooting Common Setup Issues](#7-troubleshooting-common-setup-issues)
 
 ---
 
@@ -1175,7 +1178,164 @@ This demo verifies the full drift detection lifecycle from scan initiation throu
 
 ---
 
-## 4. Troubleshooting Common Setup Issues
+## 4. Monitor-Mode Deployment
+
+Monitor mode allows new DFW policies to be deployed in an observation-only state before full enforcement. This reduces risk by enabling operators to review traffic patterns and identify false positives before blocking legitimate traffic.
+
+### 4.1 Deploying Policies in Monitor Mode
+
+To deploy a policy in monitor mode, set the `deploymentMode` property to `MONITOR` in the policy definition or pass it as a parameter to the PolicyDeployer:
+
+```javascript
+const deployer = new PolicyDeployer(nsxClient, logger, configLoader);
+
+// Deploy in monitor mode (ALLOW action with logging enabled)
+const result = await deployer.deployMonitorMode(policyDefinition, site);
+// result: { deployed: true, policyId: 'policy-123', mode: 'MONITOR', ruleCount: 5 }
+```
+
+In monitor mode, all rules are deployed with `action: ALLOW` and `logged: true` regardless of the intended enforcement action. This allows all traffic to pass while generating log entries for every matched connection. The original intended actions (ALLOW, DROP, REJECT) are preserved in rule tags so they can be restored during promotion.
+
+### 4.2 Reviewing Traffic Logs
+
+After deploying in monitor mode, review the traffic logs in your SIEM (Splunk/ELK) to validate policy correctness:
+
+1. **Filter logs** by the policy ID and log label assigned during monitor-mode deployment.
+2. **Identify false positives** -- legitimate traffic that would be blocked under enforcement mode. Look for log entries where the intended action is DROP but the traffic source/destination is a known-good communication path.
+3. **Identify missing rules** -- expected traffic flows that do not appear in the logs, indicating that the policy scope may not cover all required workloads.
+4. **Review for a minimum observation period** (recommended: 48-72 hours, configurable via `monitorModeDurationHours` in the pipeline configuration) to capture business-cycle traffic variations.
+
+### 4.3 Promoting to Enforcement
+
+Once the observation period confirms that the policy is correct, promote it to enforcement mode:
+
+```javascript
+// Promote from MONITOR to ENFORCE -- restores original rule actions
+const promoteResult = await deployer.promoteToEnforce(policyId, site);
+// promoteResult: { promoted: true, policyId: 'policy-123', mode: 'ENFORCE', ruleCount: 5 }
+```
+
+Promotion restores each rule's original action (DROP, REJECT, ALLOW) and retains logging. The transition is atomic at the policy level -- all rules within the policy are promoted together to prevent partial enforcement states.
+
+### 4.4 Checking Current Deployment Mode
+
+Query the current deployment mode of any policy:
+
+```javascript
+const mode = await deployer.getDeploymentMode(policyId, site);
+// mode: 'MONITOR' | 'ENFORCE' | 'DISABLED'
+```
+
+---
+
+## 5. Drift Trend Analysis
+
+Drift trend analysis extends the standard drift detection workflow by storing historical scan results and computing trends over configurable lookback windows. This enables operators to identify systemic drift patterns, recurring offenders, and environmental factors contributing to tag inconsistency.
+
+### 5.1 Configuration
+
+Drift trend tracking is configured in the pipeline configuration under the `driftTrend` section:
+
+```javascript
+{
+  driftTrend: {
+    enabled: true,                    // Enable/disable trend tracking
+    lookbackDays: 30,                 // Number of days of scan history to retain
+    scanRetentionCount: 100,          // Maximum number of scan records per VM
+    trendThreshold: 3,                // Number of drift occurrences to flag as trending
+    storageMode: 'local+servicenow'   // Store history locally and sync to ServiceNow
+  }
+}
+```
+
+### 5.2 How It Works
+
+1. **Scan History Storage**: After each drift detection scan, the `DriftDetectionWorkflow.storeScanHistory()` method persists the scan results (VM ID, drift categories, severity, timestamp) to local storage and optionally to a ServiceNow custom table.
+2. **Trend Analysis**: The `DriftDetectionWorkflow.analyzeDriftTrend()` method queries stored scan history within the configured lookback window and computes per-VM and per-category drift frequency.
+3. **Summary Generation**: The `DriftDetectionWorkflow.generateDriftSummary()` method produces a structured report identifying:
+   - VMs with recurring drift (exceeding the trend threshold)
+   - Most frequently drifted tag categories
+   - Time-of-day and day-of-week drift patterns
+   - Correlation between drift events and infrastructure changes (e.g., vMotion, maintenance windows)
+
+### 5.3 Lookback Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `lookbackDays` | 30 | How far back to analyze scan history |
+| `scanRetentionCount` | 100 | Maximum stored scans per VM before oldest are pruned |
+| `trendThreshold` | 3 | Minimum drift occurrences within the lookback window to classify as a trend |
+
+Operators can adjust these settings per site or globally. Shorter lookback windows (7 days) are useful for detecting acute issues, while longer windows (90 days) reveal chronic patterns.
+
+---
+
+## 6. Running Tests
+
+### 6.1 Quick Reference
+
+```bash
+# Run the full test suite with coverage
+npm test
+
+# Run with detailed coverage report
+npx jest --coverage
+
+# Run only unit tests
+npm run test:unit
+
+# Run only integration tests
+npm run test:integration
+
+# Run a specific test directory
+npx jest tests/unit/dfw/
+npx jest tests/unit/lifecycle/
+npx jest tests/unit/shared/
+npx jest tests/unit/tags/
+npx jest tests/unit/servicenow/
+
+# Run a single test file
+npx jest tests/unit/dfw/PolicyDeployer.test.js
+
+# Run tests matching a name pattern
+npx jest --testNamePattern="monitor mode"
+
+# Watch mode for development
+npx jest --watch
+
+# Generate coverage summary only
+npx jest --coverage --coverageReporters=text-summary
+```
+
+### 6.2 Coverage Targets
+
+The project targets **95%+** line, branch, function, and statement coverage across all modules. Coverage is enforced in CI -- builds fail if coverage drops below the configured thresholds.
+
+| Metric | Target |
+|--------|--------|
+| Line Coverage | 95%+ |
+| Branch Coverage | 95%+ |
+| Function Coverage | 95%+ |
+| Statement Coverage | 95%+ |
+
+### 6.3 Test Organization
+
+| Directory | Contents | Count |
+|-----------|----------|-------|
+| `tests/unit/shared/` | Shared utilities (CircuitBreaker, RetryHandler, Logger, etc.) | ~10 suites |
+| `tests/unit/tags/` | Tag operations and cardinality enforcement | ~3 suites |
+| `tests/unit/groups/` | Group membership and reconciliation | ~2 suites |
+| `tests/unit/dfw/` | DFW policy validation, conflict detection, deployment | ~5 suites |
+| `tests/unit/lifecycle/` | Orchestrators, saga, drift detection, migration | ~12 suites |
+| `tests/unit/servicenow/` | ServiceNow client scripts and integrations | ~12 suites |
+| `tests/unit/adapters/` | API adapter tests | ~3 suites |
+| `tests/unit/cmdb/` | CMDB validation | ~1 suite |
+| `tests/integration/` | End-to-end pipeline integration | 1 suite |
+| **Total** | | **54 suites, 1161+ tests** |
+
+---
+
+## 7. Troubleshooting Common Setup Issues
 
 | Symptom | Likely Cause | Resolution |
 |---------|-------------|------------|
@@ -1195,7 +1355,7 @@ This demo verifies the full drift detection lifecycle from scan initiation throu
 
 ---
 
-## 5. CMDB Access Prerequisites
+## 8. CMDB Access Prerequisites
 
 ### 5.1 CMDB Service Account
 
@@ -1222,7 +1382,7 @@ A successful response returns HTTP 200 with a JSON body containing a `result` ar
 
 ---
 
-## 6. VRA Package Import Instructions
+## 9. VRA Package Import Instructions
 
 ### 6.1 Package Import via Orchestrator UI
 
@@ -1257,7 +1417,7 @@ After importing the package, update the `DFW-Pipeline-Config` configuration elem
 
 ---
 
-## 7. New vRO Workflow Creation Instructions
+## 10. New vRO Workflow Creation Instructions
 
 ### 7.1 Workflow: DFW-CMDBValidation
 
@@ -1431,7 +1591,7 @@ try {
 
 ---
 
-## 8. ServiceNow Deployment for New Components
+## 11. ServiceNow Deployment for New Components
 
 ### 8.1 x_dfw_rule_registry Table
 
@@ -1493,7 +1653,7 @@ Create the following scheduled jobs in ServiceNow or vRO:
 
 ---
 
-## 9. Test Data Setup for New Modules
+## 12. Test Data Setup for New Modules
 
 ### 9.1 Rule Registry Test Data
 

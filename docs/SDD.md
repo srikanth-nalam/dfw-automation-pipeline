@@ -91,6 +91,45 @@ This approach was chosen over a simple fixed-window rate limiter because the tok
 
 The tradeoff is that callers may experience variable latency when the token bucket is depleted, which complicates timeout calculations. The pipeline addresses this by excluding rate-limiter wait time from the operation timeout budget -- the timeout clock starts when the API call is actually dispatched, not when it is submitted to the rate limiter.
 
+### 2.9 Monitor-Mode Deployment Pattern
+
+New DFW policies are deployed in monitor mode (ALLOW action with logging enabled) before being promoted to full enforcement. This two-phase deployment approach addresses the fundamental tension between security policy correctness and operational availability.
+
+**Why monitor-first**: DFW policies operate at the data plane level, and an incorrect DROP or REJECT rule can immediately sever legitimate application communication paths, causing outages that are difficult to diagnose under pressure. By deploying in ALLOW+logging mode first, operators can observe the traffic that matches each rule without affecting production traffic. This observation period (typically 48-72 hours) captures enough business-cycle variation to identify false positives -- legitimate traffic that would be blocked under enforcement.
+
+**How it works**: The PolicyDeployer rewrites all rule actions to ALLOW and enables logging, while preserving the original intended actions as metadata tags on each rule. When promoted to enforcement, the original actions are restored atomically across all rules in the policy. The deployment mode (MONITOR, ENFORCE, DISABLED) is queryable at any time via `getDeploymentMode()`.
+
+**Tradeoffs**:
+- **Pro**: Eliminates blind enforcement of untested policies, reducing the risk of production outages caused by overly restrictive rules.
+- **Pro**: Provides empirical traffic data for policy validation rather than relying solely on documentation-based review.
+- **Con**: During the monitor period, the security posture is weaker because traffic that should be blocked is allowed. This window must be kept as short as practical.
+- **Con**: Adds operational complexity -- operators must remember to promote policies after the observation period. The pipeline mitigates this with configurable expiry alerts.
+
+**Alternatives considered**:
+- **Direct enforcement with rollback**: Deploy rules in enforcement mode and roll back if issues are detected. Rejected because the detection-to-rollback window exposes the environment to outages, and partial rollback of complex policies is error-prone.
+- **Shadow mode at NSX level**: NSX-T does not natively support a shadow/audit mode for DFW rules. The monitor-mode pattern implements this capability at the orchestration layer.
+- **Pre-deployment simulation**: Static analysis of rule definitions against known traffic flows. This was deemed insufficient because it relies on accurate documentation of all communication paths, which is rarely complete in brownfield environments.
+
+### 2.10 Drift Trend Tracking
+
+Drift scan results are stored both locally (on the vRO filesystem or configuration element) and in a ServiceNow custom table (`u_dfw_drift_history`) to enable historical trend analysis. This dual-storage approach supports both operational and analytical use cases.
+
+**Why track trends**: Individual drift events are useful for immediate remediation, but they do not answer systemic questions: Is drift increasing over time? Are certain VMs or tag categories more prone to drift? Do drift events correlate with maintenance windows or vMotion activity? Trend tracking provides the historical data needed to answer these questions and move from reactive remediation to proactive prevention.
+
+**Why dual storage (local + ServiceNow)**:
+- **Local storage** provides fast, low-latency access to recent scan history for trend computation without requiring a network round-trip to ServiceNow. The local store is optimized for time-series queries (lookback by days) and is pruned automatically when it exceeds the configured retention limit.
+- **ServiceNow storage** provides long-term persistence, cross-site visibility (both NDCNG and TULNG results in a single view), integration with ServiceNow reporting and dashboards, and compliance audit trail. ServiceNow records survive vRO restarts and redeployments.
+
+**Tradeoffs**:
+- **Pro**: Enables detection of recurring drift patterns that would be invisible from individual scan results.
+- **Pro**: ServiceNow integration provides a single pane of glass for operations teams already using ServiceNow for incident management.
+- **Con**: Dual storage introduces consistency risk -- local and ServiceNow records may temporarily diverge if one write succeeds and the other fails. The pipeline treats local storage as authoritative for trend computation and ServiceNow as a best-effort sync target.
+- **Con**: Storage growth must be managed. The `scanRetentionCount` configuration (default: 100 scans per VM) and `lookbackDays` (default: 30 days) limit local storage consumption. ServiceNow records follow standard CMDB retention policies.
+
+**Alternatives considered**:
+- **ServiceNow-only storage**: Rejected because round-trip latency to ServiceNow (200-500ms per query) makes real-time trend computation during scan execution impractical, and vRO-to-ServiceNow connectivity failures would block drift detection entirely.
+- **External time-series database (e.g., InfluxDB)**: Rejected because it introduces an additional infrastructure dependency that must be provisioned, secured, and maintained. The local+ServiceNow approach leverages existing infrastructure.
+
 ---
 
 ## 3. Design Patterns Applied

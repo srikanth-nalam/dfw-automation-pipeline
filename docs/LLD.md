@@ -481,6 +481,9 @@ The `SG-Quarantine` group is evaluated by the same tag-criteria matching logic a
 **Key Methods**:
 - `deploy(policyDefinition: object, site: string): Promise<{ deployed: boolean, policyId: string, ruleCount: number }>` -- Translates a parsed YAML policy definition (from `policies/dfw-rules/`) into NSX Policy API JSON format and deploys via PATCH to the target NSX Manager.
 - `validate(policyDefinition: object): { valid: boolean, errors: string[] }` -- Validates a YAML policy definition against the DFW policy template schema before deployment.
+- `deployMonitorMode(policyDefinition: object, site: string): Promise<{ deployed: boolean, policyId: string, mode: 'MONITOR', ruleCount: number }>` -- Deploys a DFW policy in monitor (observation) mode. All rules are deployed with `action: ALLOW` and `logged: true` regardless of the intended enforcement action. The original intended actions are preserved as rule tags (`intended_action`) so they can be restored during promotion. This enables operators to observe traffic patterns and validate policy correctness before enforcement. Throws `DFW-7020` if the policy definition is invalid or if the NSX Manager rejects the deployment.
+- `promoteToEnforce(policyId: string, site: string): Promise<{ promoted: boolean, policyId: string, mode: 'ENFORCE', ruleCount: number }>` -- Promotes a policy from MONITOR mode to ENFORCE mode. Reads the current policy rules from NSX Manager, restores each rule's original action from the `intended_action` tag, and applies the updated rules via PATCH. The promotion is atomic at the policy level -- all rules within the policy are promoted in a single API call. Throws `DFW-7021` if the policy is not in MONITOR mode or if the `intended_action` tags are missing. Throws `DFW-7022` if the NSX Manager rejects the promotion.
+- `getDeploymentMode(policyId: string, site: string): Promise<'MONITOR' | 'ENFORCE' | 'DISABLED'>` -- Returns the current deployment mode of a policy by inspecting rule actions and tags. A policy is in MONITOR mode if all rules have `action: ALLOW` and `logged: true` with `intended_action` tags present. A policy is in ENFORCE mode if rule actions match their intended actions. A policy is DISABLED if all rules have `disabled: true`. Throws `DFW-7023` if the policy is not found.
 
 ### 1.5 Lifecycle Orchestrators Module (`src/vro/actions/lifecycle/`)
 
@@ -689,6 +692,30 @@ Detects VM rebuild and same-name reuse scenarios before provisioning. Queries vC
   reprocessedAt: null
 }
 ```
+
+#### 1.5.10 DriftDetectionWorkflow
+
+**Responsibility**: Orchestrates scheduled drift detection scans that compare CMDB-declared tag state against actual NSX tag state, with support for historical scan storage and trend analysis.
+
+**Constructor Parameters**:
+- `tagOperations: TagOperations` -- Tag CRUD operations for reading current VM tags.
+- `nsxClient: RestClient` -- NSX Manager REST client for querying realized state.
+- `snowAdapter: SnowPayloadAdapter` -- ServiceNow integration for incident creation and CMDB queries.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and drift configuration.
+
+**Key Methods**:
+- `async executeScan(site: string, options?: { autoRemediate: boolean }): Promise<{ scannedVMs: number, driftFound: number, remediated: number, incidents: number, results: Array }>` -- Executes a full drift detection scan for the specified site. Queries CMDB for expected tag assignments, reads actual tags from NSX Manager for each managed VM, computes the drift delta, and either auto-remediates or creates ServiceNow incidents based on configuration.
+
+- `async storeScanHistory(scanResult: object): Promise<{ stored: boolean, recordId: string }>` -- Persists drift scan results to local storage and optionally to a ServiceNow custom table (`u_dfw_drift_history`). Each record includes the scan timestamp, site, per-VM drift details (categories affected, severity, before/after values), and remediation actions taken. Records are pruned when they exceed the configured `scanRetentionCount` per VM, removing the oldest entries first. Throws `DFW-9010` if storage fails.
+
+- `async analyzeDriftTrend(site: string, options?: { lookbackDays: number }): Promise<{ trendingVMs: Array<{ vmId: string, driftCount: number, categories: string[] }>, categoryFrequency: object, timePatterns: object }>` -- Queries stored scan history within the configured lookback window (default: 30 days, overridable via `options.lookbackDays`) and computes drift frequency per VM and per tag category. Returns trending VMs (those exceeding the `trendThreshold` configuration), a category frequency map, and time-based drift patterns (hour-of-day, day-of-week distributions). Throws `DFW-9011` if no scan history is available for the specified site.
+
+- `async generateDriftSummary(site: string, options?: { lookbackDays: number, format: 'json' | 'table' }): Promise<{ summary: object, trendingVMs: Array, topCategories: Array, recommendations: string[] }>` -- Produces a structured drift trend report combining current scan results with historical trend data. The summary includes: total scans in the lookback window, VMs with recurring drift (exceeding trend threshold), most frequently drifted tag categories ranked by occurrence count, time-of-day and day-of-week patterns, and actionable recommendations (e.g., "VM X has drifted 5 times in 30 days on the Environment tag -- investigate automated processes that may be overwriting tags"). The `format` option controls output shape: `json` returns a nested object, `table` returns a flat array suitable for tabular display.
+
+**Error Codes**:
+- `DFW-9010` -- Scan history storage failure. Category: INFRASTRUCTURE, HTTP 500, retryable. Indicates that the drift scan completed but results could not be persisted.
+- `DFW-9011` -- No scan history available. Category: VALIDATION, HTTP 404, non-retryable. Indicates that trend analysis was requested but no historical scan data exists for the specified site.
 
 ### 1.6 Adapters Module (`src/adapters/`)
 
