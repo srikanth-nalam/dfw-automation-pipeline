@@ -13,6 +13,9 @@ This guide provides step-by-step instructions for deploying the NSX DFW Automati
 5. [Drift Trend Analysis](#5-drift-trend-analysis)
 6. [Running Tests](#6-running-tests)
 7. [Troubleshooting Common Setup Issues](#7-troubleshooting-common-setup-issues)
+13. [Hygiene Module Configuration](#13-hygiene-module-configuration)
+14. [ServiceNow Scheduled Job Setup for Hygiene Sweep](#14-servicenow-scheduled-job-setup-for-hygiene-sweep)
+15. [Test Data Setup for Hygiene Testing](#15-test-data-setup-for-hygiene-testing)
 
 ---
 
@@ -1797,6 +1800,267 @@ package/
 6. **Deploy DFW policies**: Import or create DFW policies from `policies/dfw-rules/` YAML files.
 7. **Verify connectivity**: Test REST API connectivity between all integration endpoints.
 8. **Run validation**: Execute the DFW-CMDBValidation workflow to verify CMDB data quality.
+
+---
+
+## 13. Hygiene Module Configuration
+
+The NSXHygieneOrchestrator is configured via the vRO Configuration Element `DFW-Pipeline-Config`. The following attributes control hygiene sweep behavior.
+
+### 13.1 Configuration Attributes
+
+Add these attributes to the existing `DFW-Pipeline-Config` configuration element (see Section 2.3 for the base configuration):
+
+| Attribute Name | Type | Default | Description |
+|---------------|------|---------|-------------|
+| `hygiene.orphanGroups.minAgeHours` | Number | `72` | Minimum group age (hours since creation) before it is eligible for orphan classification. Prevents deletion of groups that are still being populated by in-flight pipeline operations. |
+| `hygiene.orphanGroups.archiveDir` | String | `archives/groups/` | Directory path for archived group definitions (relative to vRO working directory) |
+| `hygiene.staleRules.maxMonitorDays` | Number | `30` | Maximum days a rule may remain in MONITOR mode without promotion before it is classified as stale |
+| `hygiene.staleRules.maxDisabledDays` | Number | `90` | Maximum days a rule may remain disabled before it is classified as stale |
+| `hygiene.staleRules.emptyGroupDays` | Number | `14` | Days a rule's source/destination groups must be empty before the rule is classified as stale |
+| `hygiene.staleRules.archiveDir` | String | `archives/rules/` | Directory path for archived rule definitions |
+| `hygiene.staleTags.maxVMs` | Number | `500` | Maximum number of VMs scanned per tag remediation invocation |
+| `hygiene.staleTags.scope` | String | `FULL` | Default scan scope: `FULL` (all managed VMs) or `DRIFTED_ONLY` (only VMs flagged in previous scans) |
+| `hygiene.phantomVMs.cleanup` | Boolean | `false` | Whether phantom VM cleanup is enabled by default. When false, phantoms are detected and reported but not cleaned. Set to true only after validating detection accuracy. |
+| `hygiene.unregisteredVMs.maxVMs` | Number | `100` | Maximum number of VMs onboarded per invocation |
+| `hygiene.unregisteredVMs.defaultAssignmentGroup` | String | `DFW-Pipeline-Admins` | ServiceNow assignment group for newly-created CMDB CI records |
+| `hygiene.sweep.quickScanLimit` | Number | `200` | Maximum VMs scanned per task during QUICK scope sweeps |
+| `hygiene.sweep.fullScanLimit` | Number | `2000` | Maximum VMs scanned per task during FULL scope sweeps |
+| `hygiene.sweep.incidentAssignmentGroup` | String | `DFW-Pipeline-Support` | ServiceNow assignment group for hygiene incidents |
+
+### 13.2 Tag-to-Environment Inference Rules
+
+The UnregisteredVMOnboarder uses configurable mapping rules to infer tag values from vCenter metadata. Add these attributes to `DFW-Pipeline-Config`:
+
+| Attribute Name | Type | Default | Description |
+|---------------|------|---------|-------------|
+| `hygiene.onboarding.clusterToEnvironment` | String (JSON) | `{"PROD-":"Production","PRE-PROD-":"Pre-Production","UAT-":"UAT","DEV-":"Development","SANDBOX-":"Sandbox"}` | Maps cluster name prefixes to Environment tag values |
+| `hygiene.onboarding.networkToClassification` | String (JSON) | `{"PCI-":"PCI","HIPAA-":"HIPAA","DMZ-":"Restricted","INTERNAL-":"Internal"}` | Maps network segment prefixes to DataClassification/Compliance tag values |
+| `hygiene.onboarding.defaultCostCenter` | String | `CC-PENDING` | Default CostCenter tag for VMs where cost center cannot be inferred |
+| `hygiene.onboarding.defaultCompliance` | String | `None` | Default Compliance tag for VMs where compliance scope cannot be inferred |
+
+### 13.3 Applying Configuration Changes
+
+1. Open the vRO Orchestrator Client.
+2. Navigate to **Administration > Configuration Elements > DFW Automation > DFW-Pipeline-Config**.
+3. Add or modify the attributes listed above.
+4. Click **Save**. Changes take effect on the next hygiene sweep invocation (no restart required).
+
+**Verification:** After saving, run a QUICK-scope dry-run sweep to confirm the configuration is being read correctly:
+1. Navigate to **Workflows > DFW Pipeline > Hygiene > Run Hygiene Sweep**.
+2. Set `site=NDCNG`, `scope=QUICK`, `dryRun=true`.
+3. Verify that the sweep completes successfully and the report reflects the configured scan limits.
+
+---
+
+## 14. ServiceNow Scheduled Job Setup for Hygiene Sweep
+
+The hygiene sweep is designed to run on a recurring schedule via a ServiceNow scheduled job that triggers the vRO workflow.
+
+### 14.1 Create the Scheduled Job
+
+1. Navigate to **System Definition > Scheduled Jobs > New**.
+2. Configure the job:
+
+| Field | Value |
+|-------|-------|
+| Name | `NSX Hygiene Sweep -- NDCNG (Weekly FULL)` |
+| Run | `Weekly` |
+| Day of Week | `Sunday` |
+| Time | `02:00` (during maintenance window) |
+| Run as | `svc-snow-vro` (service account with vRO trigger permissions) |
+| Active | `true` |
+
+3. In the **Run this Script** field, paste the following:
+
+```javascript
+(function executeHygieneSweep() {
+    var vROTrigger = new global.VroTrigger();
+
+    var payload = {
+        requestType: 'hygiene_sweep',
+        site: 'NDCNG',
+        scope: 'FULL',
+        dryRun: false,
+        correlationId: new global.CorrelationIdGenerator().generate('HYG'),
+        callbackUrl: gs.getProperty('x_enterprise.dfw.callback_url')
+    };
+
+    var workflowId = gs.getProperty('x_enterprise.dfw.hygiene_workflow_id');
+    vROTrigger.execute(workflowId, JSON.stringify(payload));
+
+    gs.info('NSX Hygiene Sweep triggered for NDCNG (FULL scope)');
+})();
+```
+
+4. Click **Submit**.
+5. Repeat for the TULNG site with a staggered schedule (e.g., Sunday 03:00).
+
+### 14.2 Daily QUICK Sweep Schedule
+
+For daily health checks, create a second scheduled job:
+
+| Field | Value |
+|-------|-------|
+| Name | `NSX Hygiene Sweep -- NDCNG (Daily QUICK)` |
+| Run | `Daily` |
+| Time | `06:00` |
+| Active | `true` |
+
+Use the same script as above but with `scope: 'QUICK'` and `dryRun: true`.
+
+### 14.3 Payload Format Reference
+
+The hygiene sweep payload sent from ServiceNow to vRO follows this schema:
+
+```json
+{
+  "requestType": "hygiene_sweep",
+  "site": "NDCNG",
+  "scope": "FULL",
+  "dryRun": false,
+  "correlationId": "HYG-2026-0414-001",
+  "callbackUrl": "https://instance.service-now.com/api/x_enterprise/dfw_callbacks/vro_callback"
+}
+```
+
+| Field | Type | Required | Valid Values | Description |
+|-------|------|----------|--------------|-------------|
+| `requestType` | String | Yes | `hygiene_sweep` | Fixed value identifying this as a hygiene sweep request |
+| `site` | String | Yes | `NDCNG`, `TULNG` | Target site for the sweep |
+| `scope` | String | Yes | `FULL`, `QUICK` | Sweep depth (see Section 11.1 of RUNBOOK.md for details) |
+| `dryRun` | Boolean | Yes | `true`, `false` | Dry run mode (no mutations when true) |
+| `correlationId` | String | Yes | `HYG-{date}-{seq}` | Unique correlation ID for tracing |
+| `callbackUrl` | String | No | Valid HTTPS URL | ServiceNow callback URL for result delivery |
+
+### 14.4 Callback Response Format
+
+The vRO workflow sends the hygiene report back to ServiceNow at the configured callback URL. The callback payload follows the standard `vro-snow-callback.schema.json` format:
+
+```json
+{
+  "correlationId": "HYG-2026-0414-001",
+  "status": "completed-with-warnings",
+  "requestType": "hygiene_sweep",
+  "result": {
+    "site": "NDCNG",
+    "scope": "FULL",
+    "dryRun": false,
+    "tasks": { "...per-task results..." },
+    "manualReviewItems": [ "...items requiring attention..." ],
+    "incidents": ["INC0012345"],
+    "overallStatus": "completed-with-warnings"
+  },
+  "timestamp": "2026-04-14T02:12:34.000Z"
+}
+```
+
+---
+
+## 15. Test Data Setup for Hygiene Testing
+
+This section describes how to set up test data for validating hygiene module functionality in a lab or development environment.
+
+### 15.1 Mock Orphan Groups
+
+Create security groups in NSX Manager that have no member VMs and are not referenced by any DFW rules. These will be detected by the OrphanGroupCleaner.
+
+1. In NSX Manager, navigate to **Inventory > Groups > Add Group**.
+2. Create the following test groups:
+
+| Group Name | Membership Criteria | Purpose |
+|------------|---------------------|---------|
+| `SG-TEST-ORPHAN-001` | `Tag equals Application:ORPHANTEST001` | Orphan group with no matching VMs |
+| `SG-TEST-ORPHAN-002` | `Tag equals Application:ORPHANTEST002` | Orphan group with no matching VMs |
+| `SG-TEST-BLOCKED-001` | `Tag equals Application:BLOCKEDTEST001` | Orphan group that will be referenced by a test rule (blocked from deletion) |
+
+3. Create a DFW rule referencing `SG-TEST-BLOCKED-001` to test the "blocked" classification:
+   - Navigate to **Security > Distributed Firewall > Add Policy**.
+   - Policy name: `TEST-HYGIENE-BLOCKED`
+   - Add a rule with source = `SG-TEST-BLOCKED-001`, action = `ALLOW`.
+
+**Expected results after sweep:**
+- `SG-TEST-ORPHAN-001` and `SG-TEST-ORPHAN-002` should be deleted (in FULL scope) or reported as orphaned (in QUICK scope).
+- `SG-TEST-BLOCKED-001` should be reported as blocked with the referencing rule identified.
+
+### 15.2 Mock Stale Rules
+
+Create DFW rules that meet staleness criteria for the StaleRuleReaper.
+
+1. In NSX Manager, navigate to **Security > Distributed Firewall > Add Policy**.
+2. Policy name: `TEST-HYGIENE-STALE-RULES`
+3. Add the following rules:
+
+| Rule Name | Source | Destination | Action | Disabled | Purpose |
+|-----------|--------|-------------|--------|----------|---------|
+| `TEST-STALE-DISABLED` | `SG-TEST-ORPHAN-001` | Any | ALLOW | Yes | Disabled rule (stale after `maxDisabledDays`) |
+| `TEST-STALE-MONITOR` | `SG-TEST-ORPHAN-002` | Any | ALLOW (logged=true, tag: `intended_action=DROP`) | No | Monitor-mode rule (stale after `maxMonitorDays`) |
+
+**Note:** To simulate staleness, set `hygiene.staleRules.maxDisabledDays=0` and `hygiene.staleRules.maxMonitorDays=0` in the test configuration. Reset to production values after testing.
+
+### 15.3 Mock Drifted VMs for Tag Remediation
+
+Create VMs with intentionally mismatched tags to test the StaleTagRemediator.
+
+1. Identify a test VM in vCenter (e.g., `TEST-HYGIENE-VM-001`).
+2. In ServiceNow CMDB, set the expected tags:
+   ```
+   Application=APP001, Tier=Web, Environment=Production, DataClassification=Internal, Compliance=PCI, CostCenter=CC-1234
+   ```
+3. In NSX Manager, apply different tags to the same VM:
+   ```
+   Application=APP001, Tier=App, Environment=Staging, DataClassification=Internal, Compliance=None, CostCenter=CC-1234
+   ```
+4. The StaleTagRemediator should detect drift on `Tier`, `Environment`, and `Compliance` categories and remediate them to match the CMDB expected state.
+
+### 15.4 Mock Phantom VMs
+
+Phantom VMs are VMs present in NSX but absent from vCenter. Simulating this in a test environment requires care:
+
+**Option A -- Use the NSX fabric mock API (recommended for unit/integration tests):**
+In the test configuration, enable the mock NSX fabric inventory that includes VM IDs not present in the vCenter mock inventory. See `tests/helpers/mockNsxFabric.js` for the mock setup.
+
+**Option B -- Manual simulation in a lab:**
+1. Provision a test VM in vCenter and allow NSX to register it.
+2. Apply tags to the VM via the pipeline.
+3. Delete the VM directly from vCenter (bypass the pipeline's DayN decommission).
+4. The VM's NSX record will persist as a phantom.
+
+**Expected results:** The PhantomVMDetector should identify the VM as a phantom and (in FULL scope with cleanup enabled) remove its tags.
+
+### 15.5 Mock Unregistered VMs
+
+Create VMs that exist in vCenter and NSX but have no CMDB record.
+
+1. Provision a test VM directly in vCenter (not through the pipeline or ServiceNow).
+2. Do NOT create a CMDB CI record for the VM.
+3. Apply NO tags to the VM in NSX.
+
+**Expected results:** The UnregisteredVMOnboarder should discover the VM, create a CMDB CI record, and apply initial tags based on the vCenter metadata (cluster, network, folder).
+
+### 15.6 Running Hygiene Tests
+
+Execute the full hygiene test suite:
+
+```bash
+# Run all hygiene module tests
+npm test -- --testPathPattern="tests/.*hygiene|tests/.*orphan|tests/.*stale|tests/.*phantom|tests/.*unregistered"
+
+# Run individual module tests
+npm test -- --testPathPattern="tests/.*OrphanGroupCleaner"
+npm test -- --testPathPattern="tests/.*StaleRuleReaper"
+npm test -- --testPathPattern="tests/.*StaleTagRemediator"
+npm test -- --testPathPattern="tests/.*PhantomVMDetector"
+npm test -- --testPathPattern="tests/.*UnregisteredVMOnboarder"
+npm test -- --testPathPattern="tests/.*NSXHygieneOrchestrator"
+```
+
+**Integration test with mock data:**
+
+```bash
+# Set up mock data, run hygiene sweep, verify results
+npm test -- --testPathPattern="tests/integration/hygieneSweep"
+```
 
 ---
 

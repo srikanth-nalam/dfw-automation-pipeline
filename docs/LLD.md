@@ -1922,4 +1922,275 @@ stateDiagram-v2
 
 ---
 
+### 8.7 OrphanGroupCleaner (`src/vro/actions/groups/OrphanGroupCleaner.js`)
+
+**Responsibility**: Identifies and removes NSX security groups that have zero member VMs and are not referenced by any active DFW rules. Orphan groups accumulate over time as VMs are decommissioned or re-tagged, and their presence increases operational noise in the NSX Manager inventory. Before deletion, each group definition is archived to local storage as a JSON snapshot to support emergency restoration.
+
+**Dependencies**: `RestClient` (for NSX Manager API calls), `Logger` (for structured logging), `ConfigLoader` (for site endpoint resolution and hygiene thresholds), `DFWPolicyValidator` (for rule-reference lookups), `RuleRegistry` (for cross-referencing active rule definitions).
+
+**Constructor Parameters**:
+- `restClient: RestClient` -- HTTP client with circuit breaker and retry.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and orphan group thresholds.
+- `dfwValidator: DFWPolicyValidator` -- DFW rule reference lookups.
+- `ruleRegistry: RuleRegistry` -- Active rule definition cross-reference.
+
+**Key Methods**:
+
+- `sweep(site: string, options?: { dryRun: boolean, minAgeHours: number }): Promise<{ scanned: number, orphaned: number, deleted: number, archived: number, blocked: Array<{ groupId: string, reason: string }>, dryRun: boolean }>` -- Enumerates all security groups at the specified site, evaluates each for orphan status (zero members AND no referencing rules), and deletes confirmed orphans after archiving their definitions. When `dryRun` is true, performs all analysis but skips deletion and archiving. The `minAgeHours` option (default: 72) filters out recently-created groups to avoid deleting groups that are in the process of being populated by an in-flight pipeline operation. Groups that have zero members but ARE referenced by active DFW rules are classified as "blocked" and reported but not deleted.
+
+- `_getGroupMemberCount(groupId: string, site: string): Promise<number>` -- Queries the NSX group membership API (`GET /policy/api/v1/infra/domains/default/groups/{groupId}/members/virtual-machines`) and returns the count of current member VMs. Returns 0 if the group exists but has no members. Throws DFW-8700 if the API call fails.
+
+- `_getReferencingRules(groupId: string, site: string): Promise<Array<{ policyId: string, ruleId: string, ruleName: string }>>` -- Queries all DFW security policies at the site and inspects each rule's source and destination group references. Returns an array of rules that reference the specified group in either the source or destination field. Also cross-references the RuleRegistry for rules in non-terminal lifecycle states (REQUESTED through ENFORCED).
+
+- `_archiveGroupDefinition(group: object): Promise<{ archived: boolean, archivePath: string }>` -- Serializes the full group definition (ID, display name, expression criteria, tags, description) to a JSON file in the local archive directory (`archives/groups/{site}/{groupId}_{timestamp}.json`). This archive enables emergency restoration if a group is deleted incorrectly.
+
+- `_deleteGroup(groupId: string, site: string): Promise<{ deleted: boolean }>` -- Deletes the security group from NSX Manager via `DELETE /policy/api/v1/infra/domains/default/groups/{groupId}`. Throws DFW-8701 if the deletion fails (e.g., the group was concurrently assigned new members or referenced by a newly-created rule between the check and the delete).
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-8700 | Orphan group scan failed -- unable to query group membership or rule references | CONNECTIVITY | Yes |
+| DFW-8701 | Group deletion failed -- NSX API rejected the delete (concurrent modification or new reference) | INFRASTRUCTURE | Yes |
+
+---
+
+### 8.8 StaleRuleReaper (`src/vro/actions/dfw/StaleRuleReaper.js`)
+
+**Responsibility**: Identifies DFW rules that are no longer operationally relevant -- rules whose source or destination security groups have been empty for an extended period, rules that have been in MONITOR mode without promotion for longer than the maximum observation window, or rules that have been disabled for longer than the retention threshold. Stale rules are disabled (not deleted) and archived, preserving them for audit review while reducing rule table bloat on NSX Manager.
+
+**Dependencies**: `RestClient` (for NSX Manager API calls), `Logger` (for structured logging), `ConfigLoader` (for site endpoint resolution and staleness thresholds), `RuleRegistry` (for rule lifecycle state queries), `DFWPolicyValidator` (for rule status inspection).
+
+**Constructor Parameters**:
+- `restClient: RestClient` -- HTTP client with circuit breaker and retry.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and staleness thresholds.
+- `ruleRegistry: RuleRegistry` -- Rule lifecycle state queries.
+- `dfwValidator: DFWPolicyValidator` -- Rule status inspection.
+
+**Key Methods**:
+
+- `reap(site: string, options?: { dryRun: boolean, maxMonitorDays: number, maxDisabledDays: number, emptyGroupDays: number }): Promise<{ scanned: number, stale: number, disabled: number, archived: number, classifications: Array<{ ruleId: string, policyId: string, classification: string, reason: string }>, dryRun: boolean }>` -- Enumerates all DFW rules across all security policies at the specified site, classifies each rule for staleness using `_classifyRule`, and disables confirmed stale rules after archiving their definitions. When `dryRun` is true, performs classification only without mutations. Configuration defaults: `maxMonitorDays=30` (rules in MONITOR mode beyond this are stale), `maxDisabledDays=90` (disabled rules beyond this are stale), `emptyGroupDays=14` (rules referencing empty groups beyond this are stale).
+
+- `_classifyRule(rule: object, policyId: string, site: string): Promise<{ classification: 'active' | 'stale-monitor' | 'stale-disabled' | 'stale-empty-group', reason: string }>` -- Evaluates a single DFW rule against staleness criteria. Checks: (1) whether the rule has been in MONITOR mode longer than `maxMonitorDays`, (2) whether the rule has been disabled longer than `maxDisabledDays`, (3) whether all source and destination groups referenced by the rule have been empty for longer than `emptyGroupDays`. Rules classified as `active` are left untouched.
+
+- `_disableRule(policyId: string, ruleId: string, site: string): Promise<{ disabled: boolean }>` -- Disables the rule on NSX Manager by patching the rule with `disabled: true` via `PATCH /policy/api/v1/infra/domains/default/security-policies/{policyId}/rules/{ruleId}`. Throws DFW-8801 if the patch fails.
+
+- `_archiveRule(rule: object, policyId: string, classification: string): Promise<{ archived: boolean, archivePath: string }>` -- Serializes the full rule definition (ID, display name, action, source groups, destination groups, services, scope, sequence number, and the staleness classification) to a JSON file in the local archive directory (`archives/rules/{site}/{policyId}_{ruleId}_{timestamp}.json`).
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-8800 | Stale rule scan failed -- unable to enumerate rules or query group membership state | CONNECTIVITY | Yes |
+| DFW-8801 | Rule disable failed -- NSX API rejected the patch (concurrent modification or policy lock) | INFRASTRUCTURE | Yes |
+
+---
+
+### 8.9 StaleTagRemediator (`src/vro/actions/tags/StaleTagRemediator.js`)
+
+**Responsibility**: Detects and remediates VMs whose NSX tags have drifted from the expected state stored in the ServiceNow CMDB. Tag drift can occur when manual NSX Manager edits bypass the pipeline, when CMDB updates are not propagated, or when tag propagation fails silently. The remediator reconciles tag state by treating the CMDB as the source of truth and applying corrective tag patches to NSX. VMs that cannot be reconciled (e.g., CMDB record is incomplete or conflicting) are flagged for quarantine review.
+
+**Dependencies**: `RestClient` (for NSX Manager API calls), `Logger` (for structured logging), `ConfigLoader` (for site endpoint resolution and remediation thresholds), `TagOperations` (for tag read and write operations), `CMDBValidator` (for CMDB record lookups and tag quality checks), `SnowPayloadAdapter` (for ServiceNow incident creation on quarantine-flagged VMs).
+
+**Constructor Parameters**:
+- `restClient: RestClient` -- HTTP client with circuit breaker and retry.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and remediation thresholds.
+- `tagOperations: TagOperations` -- Tag CRUD operations.
+- `cmdbValidator: CMDBValidator` -- CMDB record lookups and tag quality validation.
+- `snowAdapter: SnowPayloadAdapter` -- ServiceNow integration for incident creation.
+
+**Key Methods**:
+
+- `remediate(site: string, options?: { dryRun: boolean, maxVMs: number, scope: 'FULL' | 'DRIFTED_ONLY' }): Promise<{ scanned: number, drifted: number, remediated: number, quarantined: number, failed: number, results: Array<{ vmId: string, status: string, delta?: object, reason?: string }>, dryRun: boolean }>` -- Scans VMs at the specified site, compares current NSX tags against CMDB expected tags, and applies corrective patches for drifted VMs. When `scope` is `FULL`, all managed VMs are scanned. When `scope` is `DRIFTED_ONLY`, only VMs flagged in previous drift detection scans are scanned. The `maxVMs` option (default: 500) caps the number of VMs processed per invocation to limit execution time. VMs with incomplete or conflicting CMDB records are flagged for quarantine rather than remediated.
+
+- `_getExpectedTagsFromCMDB(vmId: string): Promise<{ tags: object, complete: boolean, conflicts: string[] }>` -- Queries the ServiceNow CMDB for the VM's expected tag assignments. Returns the expected tag map, a completeness flag (true if all mandatory categories are populated), and an array of conflict descriptions (e.g., CMDB record has PCI compliance in a Sandbox environment). Throws DFW-8901 if the CMDB record is not found.
+
+- `_remediateVM(vmId: string, currentTags: object, expectedTags: object, site: string): Promise<{ remediated: boolean, delta: { toAdd: Array, toRemove: Array } }>` -- Computes the tag delta between current and expected, validates the resulting tag set for conflicts, and applies the corrective patch via `TagOperations.updateTags`. Returns the delta applied.
+
+- `_flagForQuarantine(vmId: string, site: string, reason: string): Promise<{ flagged: boolean, incidentId: string }>` -- Creates a ServiceNow incident for the VM, attaching the quarantine reason (e.g., "CMDB record incomplete -- missing Environment and Tier tags"), and applies a `HygieneReview=Pending` tag to the VM for dashboard visibility. Throws DFW-8902 if incident creation fails.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-8900 | Tag remediation scan failed -- unable to enumerate VMs or query CMDB | CONNECTIVITY | Yes |
+| DFW-8901 | CMDB record not found -- VM exists in NSX but has no corresponding CMDB CI | DATA_QUALITY | No |
+| DFW-8902 | Quarantine flag failed -- ServiceNow incident creation or tag application failed | CONNECTIVITY | Yes |
+
+---
+
+### 8.10 PhantomVMDetector (`src/vro/actions/lifecycle/PhantomVMDetector.js`)
+
+**Responsibility**: Detects "phantom" VMs -- virtual machines that appear in the NSX Manager fabric inventory but do not exist in the corresponding vCenter Server inventory. Phantom VMs arise when a VM is deleted from vCenter but its NSX record persists due to synchronization delays, failed cleanup, or manual NSX inventory corruption. Phantom VMs consume NSX resources (tag storage, group membership slots, rule evaluation cycles) and can cause misleading security posture reporting.
+
+**Dependencies**: `RestClient` (for NSX Manager and vCenter API calls), `Logger` (for structured logging), `ConfigLoader` (for site endpoint resolution and detection thresholds), `TagOperations` (for tag cleanup on phantom VMs).
+
+**Constructor Parameters**:
+- `restClient: RestClient` -- HTTP client with circuit breaker and retry.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and phantom detection configuration.
+- `tagOperations: TagOperations` -- Tag removal for phantom VM cleanup.
+
+**Key Methods**:
+
+- `detect(site: string, options?: { dryRun: boolean, cleanup: boolean }): Promise<{ nsxVMCount: number, vcenterVMCount: number, phantomCount: number, cleaned: number, phantoms: Array<{ vmId: string, nsxDisplayName: string, lastSeen: string, tags: object }>, dryRun: boolean }>` -- Retrieves VM inventories from both NSX Manager and vCenter, computes the set difference (VMs in NSX but not in vCenter), enriches each phantom with its current NSX tags and last-seen metadata, and optionally cleans up phantom records by removing their tags and group associations. When `dryRun` is true, only detection is performed. When `cleanup` is false (default), phantoms are reported but not cleaned.
+
+- `_getNsxVMInventory(site: string): Promise<Map<string, object>>` -- Queries the NSX fabric VM inventory via `GET /api/v1/fabric/virtual-machines` with pagination. Returns a Map keyed by VM external ID with NSX metadata (display name, tags, compute manager reference). Throws DFW-9101 if the API call fails.
+
+- `_getVcenterVMInventory(site: string): Promise<Set<string>>` -- Queries the vCenter VM inventory via `GET /api/vcenter/vm` with pagination. Returns a Set of VM external IDs representing all VMs currently registered in vCenter. Throws DFW-9102 if the API call fails.
+
+- `_getPhantomVMDetails(vmId: string, site: string): Promise<{ vmId: string, nsxDisplayName: string, lastSeen: string, tags: object, groups: string[] }>` -- Retrieves detailed information about a phantom VM from NSX Manager, including its current tags, security group memberships, and the last time NSX received a heartbeat from the VM's compute manager. This information assists operators in determining whether the phantom is a genuine orphan or a transient synchronization delay.
+
+- `_cleanupPhantomVM(vmId: string, site: string): Promise<{ cleaned: boolean, removedTags: number, removedGroups: number }>` -- Removes all tags from the phantom VM via `TagOperations.removeTags`, which triggers automatic removal from dynamic security groups. Does not delete the NSX fabric VM record itself, as that requires NSX compute manager synchronization. Logs the cleanup action for audit trail.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-9100 | Phantom VM detection failed -- unable to retrieve NSX or vCenter VM inventory | CONNECTIVITY | Yes |
+| DFW-9101 | NSX fabric VM inventory query failed -- NSX Manager API error | CONNECTIVITY | Yes |
+| DFW-9102 | vCenter VM inventory query failed -- vCenter API error | CONNECTIVITY | Yes |
+
+---
+
+### 8.11 UnregisteredVMOnboarder (`src/vro/actions/lifecycle/UnregisteredVMOnboarder.js`)
+
+**Responsibility**: Automates the onboarding of VMs that exist in vCenter and NSX but have no corresponding ServiceNow CMDB Configuration Item. Unregistered VMs represent a governance gap -- they are not tracked by the CMDB, may lack proper tags, and are invisible to compliance reporting. The onboarder creates CMDB records, applies initial tags based on discoverable attributes (cluster, network segment, folder path), and enrolls the VM in the pipeline's tag governance.
+
+**Dependencies**: `RestClient` (for NSX Manager, vCenter, and ServiceNow API calls), `Logger` (for structured logging), `ConfigLoader` (for site endpoint resolution and onboarding defaults), `SnowPayloadAdapter` (for CMDB record creation), `TagOperations` (for initial tag application), `UntaggedVMScanner` (for discovering VMs without CMDB records).
+
+**Constructor Parameters**:
+- `restClient: RestClient` -- HTTP client with circuit breaker and retry.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and onboarding defaults.
+- `snowAdapter: SnowPayloadAdapter` -- ServiceNow CMDB record creation.
+- `tagOperations: TagOperations` -- Tag application for newly onboarded VMs.
+- `untaggedVMScanner: UntaggedVMScanner` -- Discovery of VMs without CMDB records.
+
+**Key Methods**:
+
+- `onboard(site: string, options?: { dryRun: boolean, maxVMs: number, assignmentGroup: string }): Promise<{ discovered: number, onboarded: number, failed: number, skipped: number, results: Array<{ vmId: string, status: string, cmdbCiId?: string, tags?: object, reason?: string }>, dryRun: boolean }>` -- Discovers unregistered VMs at the specified site using the `UntaggedVMScanner`, creates CMDB records for each, and applies initial tags. The `assignmentGroup` option specifies the ServiceNow assignment group for the newly-created CMDB CIs (default: `DFW-Pipeline-Admins`). When `dryRun` is true, performs discovery and CMDB lookup only without creating records or applying tags. The `maxVMs` option (default: 100) caps the number of VMs onboarded per invocation. VMs that cannot be onboarded (e.g., vCenter metadata is insufficient to determine mandatory tag values) are skipped with a reason.
+
+- `_createCMDBRecord(vmDetails: object, site: string): Promise<{ created: boolean, ciSysId: string }>` -- Creates a new `cmdb_ci_vm_instance` record in ServiceNow with fields populated from vCenter VM metadata: name, IP address, operating system, cluster, datastore, folder path, and resource pool. Sets the `operational_status` to `1` (operational) and the `install_status` to `1` (installed). Throws DFW-9201 if the ServiceNow API call fails.
+
+- `_applyInitialTags(vmId: string, tags: object, site: string): Promise<{ applied: boolean, tags: object }>` -- Applies initial tags to the newly-onboarded VM based on discoverable attributes. The tag mapping uses configurable rules: cluster name maps to Environment (e.g., `PROD-CLUSTER` -> `Production`), network segment maps to DataClassification (e.g., `PCI-VLAN` -> `PCI`), folder path maps to Application (e.g., `/APP001/Web/` -> `Application=APP001, Tier=Web`). Tags that cannot be inferred are set to a configurable default value (e.g., `CostCenter=CC-PENDING`) and flagged for manual review.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-9200 | VM onboarding scan failed -- unable to discover unregistered VMs | CONNECTIVITY | Yes |
+| DFW-9201 | CMDB record creation failed -- ServiceNow API error | CONNECTIVITY | Yes |
+
+---
+
+### 8.12 NSXHygieneOrchestrator (`src/vro/actions/lifecycle/NSXHygieneOrchestrator.js`)
+
+**Responsibility**: Top-level orchestrator that coordinates all six hygiene modules (OrphanGroupCleaner, StaleRuleReaper, StaleTagRemediator, PhantomVMDetector, UnregisteredVMOnboarder, and the enhanced PolicyDeployer.cleanupEmptySections) into a single scheduled sweep workflow. The orchestrator is triggered by ServiceNow scheduled jobs or manual vRO invocations, executes each hygiene task in a defined sequence with per-task error isolation, aggregates findings into a unified report, creates ServiceNow incidents for items requiring manual review, and sends a callback to ServiceNow with the consolidated results.
+
+**Dependencies**: `OrphanGroupCleaner` (for orphan group detection and removal), `StaleRuleReaper` (for stale rule detection and disabling), `StaleTagRemediator` (for tag drift remediation), `PhantomVMDetector` (for phantom VM detection and cleanup), `UnregisteredVMOnboarder` (for unregistered VM onboarding), `PolicyDeployer` (for empty section cleanup), `Logger` (for structured logging), `ConfigLoader` (for site endpoint resolution and hygiene configuration), `SnowPayloadAdapter` (for ServiceNow incident creation and callbacks).
+
+**Constructor Parameters**:
+- `orphanGroupCleaner: OrphanGroupCleaner` -- Orphan group hygiene module instance.
+- `staleRuleReaper: StaleRuleReaper` -- Stale rule hygiene module instance.
+- `staleTagRemediator: StaleTagRemediator` -- Stale tag hygiene module instance.
+- `phantomVMDetector: PhantomVMDetector` -- Phantom VM hygiene module instance.
+- `unregisteredVMOnboarder: UnregisteredVMOnboarder` -- Unregistered VM hygiene module instance.
+- `policyDeployer: PolicyDeployer` -- Policy deployer for empty section cleanup.
+- `logger: Logger` -- Structured JSON logger.
+- `configLoader: ConfigLoader` -- Site endpoint resolution and hygiene sweep configuration.
+- `snowAdapter: SnowPayloadAdapter` -- ServiceNow integration for incident creation and callbacks.
+
+**Key Methods**:
+
+- `runHygieneSweep(payload: { site: string, scope: 'FULL' | 'QUICK', dryRun: boolean, callbackUrl?: string, correlationId: string }): Promise<HygieneReport>` -- Executes the full hygiene sweep for the specified site. The `scope` parameter controls sweep depth: `FULL` runs all six tasks with deep analysis and remediation enabled; `QUICK` runs only detection (no remediation or cleanup) with reduced VM scan limits for faster execution during off-peak hours. Each task is executed via `_executeTask` with independent error handling -- a failure in one task does not abort the remaining tasks. After all tasks complete, findings requiring manual review are consolidated and ServiceNow incidents are created via `_createHygieneIncidents`. If `callbackUrl` is provided, a callback is sent with the consolidated report via `_sendCallback`.
+
+  **HygieneReport Structure**:
+  ```javascript
+  {
+    correlationId: 'HYG-2026-0414-001',
+    site: 'NDCNG',
+    scope: 'FULL',
+    dryRun: false,
+    startTime: '2026-04-14T02:00:00.000Z',
+    endTime: '2026-04-14T02:12:34.000Z',
+    durationMs: 754000,
+    tasks: {
+      orphanGroups: { status: 'completed', scanned: 245, orphaned: 12, deleted: 12, archived: 12, blocked: 3 },
+      staleRules: { status: 'completed', scanned: 890, stale: 18, disabled: 18, archived: 18 },
+      staleTags: { status: 'completed', scanned: 500, drifted: 34, remediated: 28, quarantined: 6 },
+      phantomVMs: { status: 'completed', nsxVMCount: 1250, vcenterVMCount: 1240, phantomCount: 10, cleaned: 10 },
+      unregisteredVMs: { status: 'completed', discovered: 5, onboarded: 4, failed: 1 },
+      emptySections: { status: 'completed', cleaned: 7 }
+    },
+    manualReviewItems: [
+      { type: 'blocked-group', groupId: 'SG-Legacy-001', reason: 'Referenced by active rule DFW-R-0042' },
+      { type: 'quarantined-vm', vmId: 'vm-99', reason: 'CMDB record incomplete' },
+      { type: 'onboarding-failed', vmId: 'vm-105', reason: 'Insufficient vCenter metadata for tag inference' }
+    ],
+    incidents: ['INC0012345', 'INC0012346'],
+    overallStatus: 'completed-with-warnings'
+  }
+  ```
+
+- `_executeTask(task: string, site: string, dryRun: boolean): Promise<object>` -- Executes a single hygiene task by name (e.g., `orphanGroups`, `staleRules`). Wraps the task execution in a try-catch block, recording the start time, result, and any errors. If the task throws, the error is caught, logged, and the task result is marked as `{ status: 'failed', error: { code, message } }` without affecting other tasks.
+
+- `_createHygieneIncidents(findings: Array<object>, correlationId: string): Promise<Array<string>>` -- Creates ServiceNow incidents for manual-review items aggregated from all hygiene tasks. Groups related findings into a single incident where possible (e.g., all quarantined VMs from tag remediation go into one incident, all blocked groups go into another). Returns an array of incident numbers. Throws DFW-9301 if incident creation fails.
+
+- `_sendCallback(url: string, report: HygieneReport, correlationId: string): Promise<{ sent: boolean }>` -- Sends the consolidated hygiene report to the specified ServiceNow callback URL. The callback payload follows the standard `vro-snow-callback.schema.json` format with the report embedded in the `result` field.
+
+**Error Codes**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-9300 | Hygiene sweep orchestration failed -- unable to initialize sweep or all tasks failed | INFRASTRUCTURE | Yes |
+| DFW-9301 | Hygiene incident creation failed -- ServiceNow API error during incident creation | CONNECTIVITY | Yes |
+
+---
+
+### 8.13 Enhanced Method Specifications
+
+#### 8.13.1 PolicyDeployer.cleanupEmptySections (Extension)
+
+**Module Path**: `src/vro/actions/dfw/PolicyDeployer.js`
+
+**Method Signature**: `cleanupEmptySections(site: string, options?: { dryRun: boolean }): Promise<{ scanned: number, emptySections: number, cleaned: number, dryRun: boolean }>`
+
+**Responsibility**: Scans all DFW security policies at the specified site and removes policy sections (categories) that contain zero rules. Empty sections accumulate when rules are deleted or moved between sections and add unnecessary structure to the policy tree in NSX Manager. The method iterates through each security policy, inspects each section's rule count, and removes sections with zero rules via PATCH. Sections that are the last remaining section in a policy are preserved (NSX requires at least one section per policy).
+
+**Error Code**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-8007 | Empty section cleanup failed -- NSX API rejected the section removal | INFRASTRUCTURE | Yes |
+
+#### 8.13.2 UntaggedVMScanner.scanWithCMDBCrossRef (Extension)
+
+**Module Path**: `src/vro/actions/tags/UntaggedVMScanner.js`
+
+**Method Signature**: `scanWithCMDBCrossRef(site: string): Promise<{ totalVMs: number, untagged: number, withCMDB: number, withoutCMDB: number, results: Array<{ vmId: string, hasCMDB: boolean, cmdbCiId?: string, missingTags: string[] }> }>`
+
+**New Dependency**: `snowAdapter: SnowPayloadAdapter` -- Added to the existing constructor dependency list to enable CMDB lookups during scanning.
+
+**Responsibility**: Extends the existing `UntaggedVMScanner` functionality by cross-referencing discovered untagged VMs against the ServiceNow CMDB. For each untagged VM found, queries the CMDB `cmdb_ci_vm_instance` table to determine whether a Configuration Item exists. Returns enriched results that classify each untagged VM as either "has CMDB record but missing tags" (remediable via pipeline) or "no CMDB record" (requires onboarding). This classification drives the downstream routing of VMs to either the StaleTagRemediator or the UnregisteredVMOnboarder.
+
+#### 8.13.3 Day0Orchestrator._handleRebuildScenario (Extension)
+
+**Module Path**: `src/vro/actions/lifecycle/Day0Orchestrator.js`
+
+**Method Signature**: `_handleRebuildScenario(existingVM: { vmId: string, hasActiveCI: boolean }, payload: object, site: string): Promise<{ action: 'proceed' | 'abort', reason: string, decommissionedPrevious: boolean }>`
+
+**Responsibility**: Handles the case where a Day 0 provision request targets a VM name that already exists in vCenter (detected by `checkExistingVM`). If the existing VM has a decommissioned or absent CMDB CI, this method coordinates the cleanup of the previous VM's tags and group memberships before allowing the new provision to proceed. If the existing VM has an active CMDB CI and the payload does not include the `forceRebuild: true` flag, the method returns `{ action: 'abort' }` with the reason, causing the orchestrator to throw DFW-6211. When `forceRebuild: true` is set, the method decommissions the existing VM's tags and CMDB record, then returns `{ action: 'proceed', decommissionedPrevious: true }`.
+
+**Error Code**:
+
+| Code | Description | Category | Retryable |
+|------|-------------|----------|-----------|
+| DFW-6211 | Rebuild blocked -- existing VM has active CMDB CI and forceRebuild not set | INFRASTRUCTURE | No |
+
+---
+
 *End of Low Level Design*
