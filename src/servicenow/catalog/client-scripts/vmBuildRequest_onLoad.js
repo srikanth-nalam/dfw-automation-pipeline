@@ -40,23 +40,14 @@ function onLoad() {
 
 /**
  * Sets default values for tag-related catalog variables when the form first
- * loads. These defaults align with the enterprise tagging policy:
- *   - DataClassification defaults to "Internal" (lowest sensitivity).
- *   - Compliance defaults to "None" (no regulatory framework).
+ * loads. Optional fields may be pre-populated with sensible defaults.
  *
  * @private
  * @returns {void}
  */
 function _setDefaultFieldValues() {
-    const currentDataClassification = g_form.getValue('data_classification');
-    if (!currentDataClassification || currentDataClassification === '') {
-        g_form.setValue('data_classification', 'Internal');
-    }
-
-    const currentCompliance = g_form.getValue('compliance');
-    if (!currentCompliance || currentCompliance === '') {
-        g_form.setValue('compliance', 'None');
-    }
+    // Optional fields - no defaults needed for mandatory fields
+    // (Region, SecurityZone, Environment, AppCI, SystemRole are left blank for user input)
 }
 
 // ---------------------------------------------------------------------------
@@ -137,12 +128,13 @@ function _fetchCostCenterFromDepartment() {
  */
 function _initializeFormState() {
     // Core required fields — always mandatory
-    g_form.setMandatory('application', true);
-    g_form.setMandatory('tier', true);
+    g_form.setMandatory('region', true);
+    g_form.setMandatory('security_zone', true);
     g_form.setMandatory('environment', true);
-    g_form.setMandatory('data_classification', true);
+    g_form.setMandatory('app_ci', true);
+    g_form.setMandatory('system_role', true);
 
-    // Compliance starts as optional; onChange for Tier may make it mandatory
+    // Compliance starts as optional; onChange for SystemRole may make it mandatory
     g_form.setMandatory('compliance', false);
 
     // Hide the production warning banner element (if it exists)

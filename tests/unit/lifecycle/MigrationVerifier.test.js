@@ -10,9 +10,11 @@ describe('MigrationVerifier', () => {
     deps = {
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
-          Environment: 'Production'
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
+          Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web'
         }),
         applyTags: jest.fn().mockResolvedValue({ applied: true }),
         verifyPropagation: jest.fn().mockResolvedValue({ propagated: true })
@@ -50,9 +52,11 @@ describe('MigrationVerifier', () => {
     sourceSite: 'NDCNG',
     destinationSite: 'TULNG',
     expectedTags: {
-      Application: 'APP001',
-      Tier: 'Web',
-      Environment: 'Production'
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
+      Environment: 'Production',
+      AppCI: 'APP001',
+      SystemRole: 'Web'
     },
     callbackUrl: 'https://snow.test/callback',
     ...overrides
@@ -75,14 +79,14 @@ describe('MigrationVerifier', () => {
   // Tags missing
   test('detects and re-applies missing tags', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'APP001'
-      // Missing Tier and Environment
+      AppCI: 'APP001'
+      // Missing Region, SecurityZone, Environment, SystemRole
     });
 
     const result = await verifier.verifyPostMigration(buildPayload());
 
     expect(result.tagsPreserved).toBe(false);
-    expect(result.missingTags).toHaveProperty('Tier');
+    expect(result.missingTags).toHaveProperty('SystemRole');
     expect(result.missingTags).toHaveProperty('Environment');
     expect(result.reapplied).toBe(true);
     expect(deps.tagOperations.applyTags).toHaveBeenCalled();

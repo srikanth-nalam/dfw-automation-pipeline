@@ -457,6 +457,340 @@ class PolicyDeployer {
   }
 
   // ---------------------------------------------------------------------------
+  // Monitor-mode deployment and enforcement transition
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Deploys a policy in monitor (log-only) mode.
+   * All rules within the policy have their action set to 'ALLOW' with logging
+   * enabled, so traffic is permitted but logged for analysis.
+   *
+   * @async
+   * @param {Object} policyYaml - Parsed policy YAML definition.
+   * @param {string} site - Target site (NDCNG or TULNG).
+   * @param {string} [scope='GLOBAL'] - Deployment scope.
+   * @returns {Promise<{policyName: string, rulesDeployed: number, mode: string, originalActions: Object}>}
+   *
+   * @throws {Error} When the policy is structurally invalid or the deployment fails.
+   *
+   * @example
+   * const result = await deployer.deployMonitorMode(policy, 'NDCNG');
+   * // result.originalActions maps ruleId → original action for later promotion
+   */
+  async deployMonitorMode(policyYaml, site, scope = 'GLOBAL') {
+    const policy = PolicyDeployer._parsePolicy(policyYaml);
+
+    const validation = this.validatePolicyStructure(policy);
+    if (!validation.valid) {
+      throw new Error(
+        `[DFW-8002] Policy structure validation failed: ${validation.errors.join('; ')}`
+      );
+    }
+
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8003] site is required and must be a non-empty string.');
+    }
+
+    // Save original actions before overriding
+    const originalActions = {};
+    const monitorRules = (policy.rules || []).map((rule) => {
+      const ruleId = PolicyDeployer._sanitizePolicyName(rule.name);
+      originalActions[ruleId] = rule.action;
+
+      return Object.assign({}, rule, {
+        action: 'ALLOW',
+        logged: true,
+        _monitor_mode: true
+      });
+    });
+
+    const monitorPolicy = Object.assign({}, policy, {
+      rules: monitorRules,
+      description: `[MONITOR] ${policy.description || policy.name}`
+    });
+
+    this._logger.info(
+      `Deploying policy "${policy.name}" in MONITOR mode at site "${site}".`
+    );
+
+    const result = await this.deploy(monitorPolicy, site, scope);
+
+    return {
+      policyName: result.policyName,
+      rulesDeployed: result.rulesDeployed,
+      mode: 'MONITOR',
+      originalActions
+    };
+  }
+
+  /**
+   * Promotes a policy from monitor mode to full enforcement.
+   * Restores original actions (ALLOW/DROP/REJECT) from the monitor deployment record.
+   *
+   * @async
+   * @param {string} policyName - The policy to promote.
+   * @param {string} site - Target site.
+   * @param {Object} originalActions - Map of ruleId to original action, saved during monitor deploy.
+   * @returns {Promise<{policyName: string, rulesPromoted: number, mode: string}>}
+   *
+   * @throws {Error} When the policy cannot be fetched or the promotion fails.
+   *
+   * @example
+   * const result = await deployer.promoteToEnforce('my-policy', 'NDCNG', originalActions);
+   */
+  async promoteToEnforce(policyName, site, originalActions) {
+    if (!policyName || typeof policyName !== 'string') {
+      throw new Error('[DFW-8006] policyName is required and must be a non-empty string.');
+    }
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8006] site is required and must be a non-empty string.');
+    }
+    if (!originalActions || typeof originalActions !== 'object') {
+      throw new Error('[DFW-8006] originalActions map is required for enforcement promotion.');
+    }
+
+    const endpoints = this._config.getEndpointsForSite(site);
+    const sanitizedName = PolicyDeployer._sanitizePolicyName(policyName);
+    const url =
+      `${endpoints.nsxUrl}/policy/api/v1/infra/domains/default/` +
+      `security-policies/${encodeURIComponent(sanitizedName)}`;
+
+    this._logger.info(
+      `Promoting policy "${policyName}" from MONITOR to ENFORCE at site "${site}".`
+    );
+
+    // Fetch current policy from NSX
+    let currentPolicy;
+    try {
+      const response = await this._restClient.get(url);
+      currentPolicy = response.body || response;
+    } catch (err) {
+      throw new Error(
+        `[DFW-8006] Failed to fetch policy "${policyName}" for promotion: ${err.message}`
+      );
+    }
+
+    // Restore original actions and remove monitor-mode markers
+    const rules = currentPolicy.rules || [];
+    let rulesPromoted = 0;
+
+    for (const rule of rules) {
+      const ruleId = rule.id || PolicyDeployer._sanitizePolicyName(rule.display_name || rule.name || '');
+      if (originalActions[ruleId]) {
+        rule.action = originalActions[ruleId];
+        rulesPromoted += 1;
+      }
+      delete rule._monitor_mode;
+    }
+
+    // Remove monitor-mode description prefix
+    if (currentPolicy.description && currentPolicy.description.startsWith('[MONITOR]')) {
+      currentPolicy.description = currentPolicy.description.replace(/^\[MONITOR\]\s*/, '');
+    }
+
+    // Re-deploy with restored actions
+    try {
+      await this._restClient.patch(url, currentPolicy);
+    } catch (err) {
+      throw new Error(
+        `[DFW-8006] Failed to promote policy "${policyName}" to ENFORCE: ${err.message}`
+      );
+    }
+
+    this._logger.info(
+      `Policy "${policyName}" promoted to ENFORCE — ${rulesPromoted} rule(s) updated.`
+    );
+
+    return {
+      policyName: sanitizedName,
+      rulesPromoted,
+      mode: 'ENFORCE'
+    };
+  }
+
+  /**
+   * Gets the current deployment mode for a policy (MONITOR or ENFORCE).
+   * Checks the NSX API to see if all rules have logging enabled with permissive actions.
+   *
+   * @async
+   * @param {string} policyName - Policy name.
+   * @param {string} site - Target site.
+   * @returns {Promise<{mode: string, rulesInMonitor: number, rulesInEnforce: number}>}
+   *
+   * @throws {Error} When the policy cannot be fetched.
+   *
+   * @example
+   * const status = await deployer.getDeploymentMode('my-policy', 'NDCNG');
+   * console.log(status.mode); // 'MONITOR', 'ENFORCE', or 'MIXED'
+   */
+  async getDeploymentMode(policyName, site) {
+    if (!policyName || typeof policyName !== 'string') {
+      throw new Error('[DFW-8007] policyName is required and must be a non-empty string.');
+    }
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8007] site is required and must be a non-empty string.');
+    }
+
+    const endpoints = this._config.getEndpointsForSite(site);
+    const sanitizedName = PolicyDeployer._sanitizePolicyName(policyName);
+    const url =
+      `${endpoints.nsxUrl}/policy/api/v1/infra/domains/default/` +
+      `security-policies/${encodeURIComponent(sanitizedName)}`;
+
+    let currentPolicy;
+    try {
+      const response = await this._restClient.get(url);
+      currentPolicy = response.body || response;
+    } catch (err) {
+      throw new Error(
+        `[DFW-8007] Failed to fetch policy "${policyName}": ${err.message}`
+      );
+    }
+
+    const rules = currentPolicy.rules || [];
+    let rulesInMonitor = 0;
+    let rulesInEnforce = 0;
+
+    for (const rule of rules) {
+      const isMonitor = rule.action === 'ALLOW' && rule.logged === true &&
+        (rule._monitor_mode === true || (currentPolicy.description && currentPolicy.description.startsWith('[MONITOR]')));
+
+      if (isMonitor) {
+        rulesInMonitor += 1;
+      } else {
+        rulesInEnforce += 1;
+      }
+    }
+
+    let mode;
+    if (rulesInMonitor > 0 && rulesInEnforce === 0) {
+      mode = 'MONITOR';
+    } else if (rulesInEnforce > 0 && rulesInMonitor === 0) {
+      mode = 'ENFORCE';
+    } else {
+      mode = 'MIXED';
+    }
+
+    return {
+      mode,
+      rulesInMonitor,
+      rulesInEnforce
+    };
+  }
+
+  /**
+   * Identifies and removes DFW security policy sections that contain zero active
+   * (non-disabled) rules. System-default policies (prefixed with "Default" or
+   * "Infrastructure") are always skipped.
+   *
+   * @async
+   * @param {string} site - Site code (e.g. `'NDCNG'`).
+   * @param {Object} [options={}] - Cleanup options.
+   * @param {boolean} [options.dryRun=true] - If true, report only without deleting.
+   * @returns {Promise<{site: string, timestamp: string, totalSections: number,
+   *   emptySections: number, deletedSections: number, skippedSections: number,
+   *   archived: Array}>}
+   *
+   * @throws {Error} DFW-8007 when the cleanup operation fails.
+   *
+   * @example
+   * const result = await deployer.cleanupEmptySections('NDCNG', { dryRun: false });
+   */
+  async cleanupEmptySections(site, options = {}) {
+    const dryRun = options.dryRun !== false;
+
+    if (!site || typeof site !== 'string') {
+      throw new Error('[DFW-8007] site is required and must be a non-empty string.');
+    }
+
+    this._logger.info(
+      `Starting empty section cleanup for site "${site}" (dryRun=${dryRun}).`
+    );
+
+    const endpoints = this._config.getEndpointsForSite(site);
+    const url = `${endpoints.nsxUrl}/policy/api/v1/infra/domains/default/security-policies`;
+
+    let policies;
+    try {
+      const response = await this._restClient.get(url);
+      const body = response.body || response;
+      policies = body.results || body || [];
+    } catch (err) {
+      throw new Error(
+        `[DFW-8007] Failed to fetch security policies for cleanup: ${err.message}`
+      );
+    }
+
+    const totalSections = policies.length;
+    let emptySections = 0;
+    let deletedSections = 0;
+    let skippedSections = 0;
+    const archived = [];
+
+    for (const policy of policies) {
+      const policyId = policy.id || policy.display_name || '';
+      const policyName = policy.display_name || policyId;
+
+      // Skip system-default policies
+      if (policyName.startsWith('Default') || policyName.startsWith('Infrastructure')) {
+        skippedSections += 1;
+        continue;
+      }
+
+      // Count active (non-disabled) rules
+      const rules = policy.rules || [];
+      const activeRuleCount = rules.filter(r => r.disabled !== true).length;
+
+      if (activeRuleCount > 0) {
+        continue;
+      }
+
+      emptySections += 1;
+
+      // Archive the policy definition
+      archived.push({
+        archivedAt: new Date().toISOString(),
+        policyId,
+        displayName: policyName,
+        definition: JSON.parse(JSON.stringify(policy))
+      });
+
+      // Delete if not dry run
+      if (!dryRun) {
+        const deleteUrl =
+          `${endpoints.nsxUrl}/policy/api/v1/infra/domains/default/` +
+          `security-policies/${encodeURIComponent(policyId)}`;
+
+        try {
+          await this._restClient.delete(deleteUrl);
+          deletedSections += 1;
+          this._logger.info(`Deleted empty policy section "${policyName}".`);
+        } catch (delErr) {
+          this._logger.error(
+            `Failed to delete empty policy section "${policyName}": ${delErr.message}`
+          );
+          skippedSections += 1;
+        }
+      }
+    }
+
+    this._logger.info(
+      `Empty section cleanup completed: ${emptySections} empty of ${totalSections} total, ` +
+      `${deletedSections} deleted, ${skippedSections} skipped.`
+    );
+
+    return {
+      site,
+      timestamp: new Date().toISOString(),
+      totalSections,
+      emptySections,
+      deletedSections,
+      skippedSections,
+      archived
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
 

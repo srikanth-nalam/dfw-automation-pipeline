@@ -49,12 +49,11 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      * @constant {Array.<{field: string, label: string}>}
      */
     VM_BUILD_REQUIRED_FIELDS: [
-        { field: 'application',          label: 'Application' },
-        { field: 'tier',                 label: 'Tier' },
+        { field: 'region',               label: 'Region' },
+        { field: 'security_zone',        label: 'Security Zone' },
         { field: 'environment',          label: 'Environment' },
-        { field: 'data_classification',  label: 'Data Classification' },
-        { field: 'compliance',           label: 'Compliance' },
-        { field: 'cost_center',          label: 'Cost Center' }
+        { field: 'app_ci',              label: 'AppCI' },
+        { field: 'system_role',         label: 'System Role' }
     ],
 
     /**
@@ -63,11 +62,11 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      */
     TAG_UPDATE_REQUIRED_FIELDS: [
         { field: 'vm_ci',               label: 'VM Configuration Item' },
-        { field: 'application',          label: 'Application' },
-        { field: 'tier',                 label: 'Tier' },
+        { field: 'region',               label: 'Region' },
+        { field: 'security_zone',        label: 'Security Zone' },
         { field: 'environment',          label: 'Environment' },
-        { field: 'data_classification',  label: 'Data Classification' },
-        { field: 'compliance',           label: 'Compliance' }
+        { field: 'app_ci',              label: 'AppCI' },
+        { field: 'system_role',         label: 'System Role' }
     ],
 
     /**
@@ -75,11 +74,13 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      * @constant {string[]}
      */
     TAG_CATEGORIES: [
-        'Application',
-        'Tier',
+        'Region',
+        'SecurityZone',
         'Environment',
-        'DataClassification',
+        'AppCI',
+        'SystemRole',
         'Compliance',
+        'DataClassification',
         'CostCenter'
     ],
 
@@ -88,9 +89,11 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      * @constant {string[]}
      */
     SINGLE_VALUE_CATEGORIES: [
-        'Application',
-        'Tier',
+        'Region',
+        'SecurityZone',
         'Environment',
+        'AppCI',
+        'SystemRole',
         'DataClassification',
         'CostCenter'
     ],
@@ -119,11 +122,13 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      *   5. Conditional requirement rules (e.g., Database tier requires Compliance)
      *
      * @param {Object} variables - The catalog item variables to validate.
-     * @param {string} variables.application          - Application tag value.
-     * @param {string} variables.tier                 - Tier tag value.
+     * @param {string} variables.region                - Region tag value.
+     * @param {string} variables.security_zone        - SecurityZone tag value.
      * @param {string} variables.environment          - Environment tag value.
-     * @param {string} variables.data_classification  - DataClassification tag value.
-     * @param {string} variables.compliance           - Compliance tag value(s), comma-separated if multi.
+     * @param {string} variables.app_ci              - AppCI tag value.
+     * @param {string} variables.system_role         - SystemRole tag value.
+     * @param {string} [variables.compliance]         - Compliance tag value(s), comma-separated if multi.
+     * @param {string} [variables.data_classification] - DataClassification tag value.
      * @param {string} [variables.cost_center]        - CostCenter tag value.
      * @param {string} [variables.vm_ci]              - VM CI sys_id (for tag update requests).
      * @param {string} requestType - Either "vm_build" or "tag_update".
@@ -133,12 +138,11 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      * @example
      * var validator = new CatalogItemValidation();
      * var result = validator.validate({
-     *     application: 'APP001',
-     *     tier: 'Database',
+     *     region: 'NDCNG',
+     *     security_zone: 'Greenzone',
      *     environment: 'Production',
-     *     data_classification: 'Confidential',
-     *     compliance: 'PCI',
-     *     cost_center: 'CC-1234'
+     *     app_ci: 'APP001',
+     *     system_role: 'Database'
      * }, 'vm_build');
      *
      * if (!result.valid) {
@@ -258,8 +262,11 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
 
         /** @type {Array.<{variable: string, category: string}>} */
         const tagMappings = [
-            { variable: 'tier',                category: 'Tier' },
+            { variable: 'region',               category: 'Region' },
+            { variable: 'security_zone',        category: 'SecurityZone' },
             { variable: 'environment',          category: 'Environment' },
+            { variable: 'app_ci',              category: 'AppCI' },
+            { variable: 'system_role',         category: 'SystemRole' },
             { variable: 'data_classification',  category: 'DataClassification' },
             { variable: 'compliance',           category: 'Compliance' }
         ];
@@ -400,7 +407,7 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
         const environment = (variables.environment || '').toString().trim();
         const compliance = (variables.compliance || '').toString().trim();
         const dataClassification = (variables.data_classification || '').toString().trim();
-        const tier = (variables.tier || '').toString().trim();
+        const systemRole = (variables.system_role || '').toString().trim();
 
         const complianceValues = compliance.split(',').map(function (v) {
             return v.trim();
@@ -455,11 +462,11 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
             });
         }
 
-        // Rule 5: Database tier in Sandbox
-        if (tier === 'Database' && environment === 'Sandbox') {
+        // Rule 5: Database system role in Sandbox
+        if (systemRole === 'Database' && environment === 'Sandbox') {
             errors.push({
-                field: 'tier',
-                message: 'Database tier workloads in Sandbox require explicit approval. ' +
+                field: 'system_role',
+                message: 'Database system role workloads in Sandbox require explicit approval. ' +
                     'Consider using Development or Staging instead.',
                 code: this.ERROR_PREFIX + '-4007'
             });
@@ -497,12 +504,14 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
             const ruleCode = gr.getValue('u_error_code') || (this.ERROR_PREFIX + '-4100');
 
             const fieldMap = {
-                'Tier': 'tier',
+                'Region': 'region',
+                'SecurityZone': 'security_zone',
                 'Environment': 'environment',
+                'AppCI': 'app_ci',
+                'SystemRole': 'system_role',
                 'DataClassification': 'data_classification',
                 'Compliance': 'compliance',
-                'CostCenter': 'cost_center',
-                'Application': 'application'
+                'CostCenter': 'cost_center'
             };
 
             const var1 = variables[fieldMap[ruleCategory1]] || '';
@@ -545,17 +554,17 @@ CatalogItemValidation.prototype = Object.extendsObject(AbstractAjaxProcessor, {
      */
     _validateConditionalRules: function (variables) {
         const errors = [];
-        const tier = (variables.tier || '').toString().trim();
+        const systemRole = (variables.system_role || '').toString().trim();
         const environment = (variables.environment || '').toString().trim();
         const compliance = (variables.compliance || '').toString().trim();
         const dataClassification = (variables.data_classification || '').toString().trim();
 
-        // Database tier requires explicit compliance selection
-        if (tier === 'Database' && (!compliance || compliance === '' || compliance === 'None')) {
+        // Database system role requires explicit compliance selection
+        if (systemRole === 'Database' && (!compliance || compliance === '' || compliance === 'None')) {
             errors.push({
                 field: 'compliance',
-                message: 'Database tier workloads require an explicit compliance framework. ' +
-                    '"None" is not permitted for Database tier.',
+                message: 'Database system role workloads require an explicit compliance framework. ' +
+                    '"None" is not permitted for Database system role.',
                 code: this.ERROR_PREFIX + '-5002'
             });
         }

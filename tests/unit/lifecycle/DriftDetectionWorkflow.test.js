@@ -10,9 +10,11 @@ describe('DriftDetectionWorkflow', () => {
     deps = {
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
-          Environment: 'Production'
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
+          Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web'
         }),
         applyTags: jest.fn().mockResolvedValue({ applied: true })
       },
@@ -43,9 +45,11 @@ describe('DriftDetectionWorkflow', () => {
       },
       snowAdapter: {
         getExpectedTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
-          Environment: 'Production'
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
+          Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web'
         }),
         createIncident: jest.fn().mockResolvedValue({ incidentId: 'INC001' })
       }
@@ -80,9 +84,11 @@ describe('DriftDetectionWorkflow', () => {
   // Drift detected
   test('detects drift when actual tags differ from expected', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'APP001',
-      Tier: 'Web',
-      Environment: 'Development'  // Drifted from Production
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
+      Environment: 'Development',  // Drifted from Production
+      AppCI: 'APP001',
+      SystemRole: 'Web'
     });
 
     const report = await workflow.runDriftScan(buildPayload());
@@ -99,9 +105,11 @@ describe('DriftDetectionWorkflow', () => {
   // Auto-remediation
   test('auto-remediates when enabled', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'APP001',
-      Tier: 'Web',
-      Environment: 'Development'
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
+      Environment: 'Development',
+      AppCI: 'APP001',
+      SystemRole: 'Web'
     });
 
     const report = await workflow.runDriftScan(buildPayload({ autoRemediate: true }));
@@ -114,9 +122,11 @@ describe('DriftDetectionWorkflow', () => {
   // Auto-remediation failure
   test('records error when remediation fails', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'WRONG',
-      Tier: 'Web',
-      Environment: 'Production'
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
+      Environment: 'Production',
+      AppCI: 'WRONG',
+      SystemRole: 'Web'
     });
     deps.tagOperations.applyTags.mockRejectedValue(new Error('NSX error'));
 
@@ -153,9 +163,11 @@ describe('DriftDetectionWorkflow', () => {
   // Incident creation for unresolved drift
   test('creates incidents for unresolved drift', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'WRONG',
-      Tier: 'Web',
-      Environment: 'Production'
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
+      Environment: 'Production',
+      AppCI: 'WRONG',
+      SystemRole: 'Web'
     });
 
     await workflow.runDriftScan(buildPayload({ autoRemediate: false }));
@@ -168,9 +180,11 @@ describe('DriftDetectionWorkflow', () => {
     deps.tagOperations.getTags
       .mockRejectedValueOnce(new Error('VM unreachable'))
       .mockResolvedValueOnce({
-        Application: 'APP001',
-        Tier: 'Web',
-        Environment: 'Production'
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
+        Environment: 'Production',
+        AppCI: 'APP001',
+        SystemRole: 'Web'
       });
 
     const report = await workflow.runDriftScan(buildPayload());
@@ -183,9 +197,11 @@ describe('DriftDetectionWorkflow', () => {
   // Group discrepancies
   test('records group discrepancies for drifted VMs', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'WRONG',
-      Tier: 'Web',
-      Environment: 'Production'
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
+      Environment: 'Production',
+      AppCI: 'WRONG',
+      SystemRole: 'Web'
     });
     deps.groupReconciler.reconcile.mockResolvedValue({
       discrepancies: [{ group: 'SG-Web-Production', action: 'add' }]

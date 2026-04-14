@@ -17,8 +17,8 @@ describe('UntaggedVMScanner', () => {
       },
       tagOperations: {
         getTags: jest.fn()
-          .mockResolvedValueOnce({ Application: 'APP001', Tier: 'Web', Environment: 'Production' })
-          .mockResolvedValueOnce({ Application: 'APP002' })
+          .mockResolvedValueOnce({ Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' })
+          .mockResolvedValueOnce({ AppCI: 'APP002' })
           .mockResolvedValueOnce({})
       },
       logger: {
@@ -65,18 +65,18 @@ describe('UntaggedVMScanner', () => {
 
     const partialVM = report.untaggedVMs.find(vm => vm.vmId === 'vm-2');
     expect(partialVM).toBeDefined();
-    expect(partialVM.missingCategories).toContain('Tier');
+    expect(partialVM.missingCategories).toContain('SystemRole');
     expect(partialVM.missingCategories).toContain('Environment');
     expect(partialVM.suggestions.length).toBeGreaterThan(0);
   });
 
   // Name pattern matching
-  test('suggests Tier based on VM name patterns', () => {
+  test('suggests SystemRole based on VM name patterns', () => {
     const suggestions = scanner.suggestClassification('NDCNG-APP001-WEB-P01', {});
 
-    const tierSuggestion = suggestions.find(s => s.category === 'Tier');
-    expect(tierSuggestion).toBeDefined();
-    expect(tierSuggestion.suggestedValue).toBe('Web');
+    const roleSuggestion = suggestions.find(s => s.category === 'SystemRole');
+    expect(roleSuggestion).toBeDefined();
+    expect(roleSuggestion.suggestedValue).toBe('Web');
   });
 
   test('suggests Environment based on VM name patterns', () => {
@@ -87,10 +87,10 @@ describe('UntaggedVMScanner', () => {
     expect(envSuggestion.suggestedValue).toBe('Production');
   });
 
-  test('extracts Application code from VM name', () => {
+  test('extracts AppCI code from VM name', () => {
     const suggestions = scanner.suggestClassification('NDCNG-APP001-WEB-P01', {});
 
-    const appSuggestion = suggestions.find(s => s.category === 'Application');
+    const appSuggestion = suggestions.find(s => s.category === 'AppCI');
     expect(appSuggestion).toBeDefined();
     expect(appSuggestion.suggestedValue).toBe('APP001');
   });
@@ -116,7 +116,7 @@ describe('UntaggedVMScanner', () => {
   // Tag retrieval failure
   test('handles tag retrieval failure for individual VM', async () => {
     deps.tagOperations.getTags = jest.fn()
-      .mockResolvedValueOnce({ Application: 'APP001', Tier: 'Web', Environment: 'Production' })
+      .mockResolvedValueOnce({ Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' })
       .mockRejectedValueOnce(new Error('NSX error'))
       .mockResolvedValueOnce({});
 
@@ -137,5 +137,65 @@ describe('UntaggedVMScanner', () => {
     expect(report).toHaveProperty('untagged');
     expect(report).toHaveProperty('coveragePercent');
     expect(report).toHaveProperty('untaggedVMs');
+  });
+
+  // ---------------------------------------------------------------------------
+  // scanWithCMDBCrossRef
+  // ---------------------------------------------------------------------------
+  describe('scanWithCMDBCrossRef', () => {
+    beforeEach(() => {
+      deps.snowAdapter = {
+        toCallbackPayload: jest.fn()
+      };
+      deps.tagOperations.getTags = jest.fn()
+        .mockResolvedValueOnce({ Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web' })
+        .mockResolvedValueOnce({ AppCI: 'APP002' })
+        .mockResolvedValueOnce({});
+      scanner = new UntaggedVMScanner(deps);
+    });
+
+    test('classifies VMs by CMDB registration status', async () => {
+      // vm-1: tagged + registered (skip), vm-2: untagged + registered, vm-3: untagged + unregistered
+      deps.snowAdapter.toCallbackPayload
+        .mockResolvedValueOnce({ ciStatus: 'Active' }) // vm-1
+        .mockResolvedValueOnce({ ciStatus: 'Active' }) // vm-2
+        .mockResolvedValueOnce({ ciStatus: 'not_found' }); // vm-3
+
+      const report = await scanner.scanWithCMDBCrossRef('NDCNG');
+
+      expect(report).toHaveProperty('classifiedVMs');
+      expect(report).toHaveProperty('untaggedRegistered');
+      expect(report).toHaveProperty('untaggedUnregistered');
+      expect(report).toHaveProperty('taggedUnregistered');
+      expect(report.untaggedRegistered).toBe(1); // vm-2
+      expect(report.untaggedUnregistered).toBe(1); // vm-3
+    });
+
+    test('handles CMDB lookup failure gracefully', async () => {
+      deps.snowAdapter.toCallbackPayload
+        .mockRejectedValueOnce(new Error('CMDB timeout'))
+        .mockResolvedValueOnce({ ciStatus: 'Active' })
+        .mockResolvedValueOnce({ ciStatus: 'not_found' });
+
+      const report = await scanner.scanWithCMDBCrossRef('NDCNG');
+
+      // Failed lookup should not crash
+      expect(report.classifiedVMs).toBeDefined();
+      expect(deps.logger.warn).toHaveBeenCalled();
+    });
+
+    test('includes existing scan report data', async () => {
+      deps.snowAdapter.toCallbackPayload
+        .mockResolvedValueOnce({ ciStatus: 'Active' })
+        .mockResolvedValueOnce({ ciStatus: 'Active' })
+        .mockResolvedValueOnce({ ciStatus: 'Active' });
+
+      const report = await scanner.scanWithCMDBCrossRef('NDCNG');
+
+      expect(report).toHaveProperty('totalVMs');
+      expect(report).toHaveProperty('fullyTagged');
+      expect(report).toHaveProperty('partiallyTagged');
+      expect(report).toHaveProperty('untagged');
+    });
   });
 });

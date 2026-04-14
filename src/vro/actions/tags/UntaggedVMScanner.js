@@ -14,7 +14,7 @@
  * @constant {string[]}
  * @private
  */
-const MANDATORY_TAGS = ['Application', 'Tier', 'Environment'];
+const MANDATORY_TAGS = ['Region', 'SecurityZone', 'Environment', 'AppCI', 'SystemRole'];
 
 /**
  * VM name pattern matchers for auto-classification.
@@ -22,13 +22,13 @@ const MANDATORY_TAGS = ['Application', 'Tier', 'Environment'];
  * @private
  */
 const NAME_PATTERNS = Object.freeze({
-  tier: [
+  systemRole: [
     { pattern: /[_\-]WEB[_\-\d]/i, value: 'Web' },
-    { pattern: /[_\-]APP[_\-\d]/i, value: 'App' },
-    { pattern: /[_\-]DB[_\-\d]/i,  value: 'DB' },
+    { pattern: /[_\-]APP[_\-\d]/i, value: 'Application' },
+    { pattern: /[_\-]DB[_\-\d]/i,  value: 'Database' },
     { pattern: /WEB/i,             value: 'Web' },
-    { pattern: /APP/i,             value: 'App' },
-    { pattern: /DB/i,              value: 'DB' }
+    { pattern: /APP/i,             value: 'Application' },
+    { pattern: /DB/i,              value: 'Database' }
   ],
   environment: [
     { pattern: /[_\-]P\d{2}$/i,       value: 'Production' },
@@ -38,7 +38,7 @@ const NAME_PATTERNS = Object.freeze({
     { pattern: /UAT/i,                value: 'UAT' },
     { pattern: /STG|STAGING/i,        value: 'Staging' }
   ],
-  application: [
+  appCI: [
     { pattern: /[A-Z]{3,6}\d{3}/,    extract: true }
   ]
 });
@@ -75,6 +75,8 @@ class UntaggedVMScanner {
     this.logger = dependencies.logger;
     /** @private */
     this.configLoader = dependencies.configLoader;
+    /** @private */
+    this.snowAdapter = dependencies.snowAdapter || null;
   }
 
   /**
@@ -201,13 +203,13 @@ class UntaggedVMScanner {
     const suggestions = [];
     let matchCount = 0;
 
-    // Tier suggestion
-    if (!currentTags.Tier) {
-      const tierMatch = this._matchPattern(vmName, NAME_PATTERNS.tier);
-      if (tierMatch) {
+    // SystemRole suggestion
+    if (!currentTags.SystemRole) {
+      const roleMatch = this._matchPattern(vmName, NAME_PATTERNS.systemRole);
+      if (roleMatch) {
         suggestions.push({
-          category: 'Tier',
-          suggestedValue: tierMatch,
+          category: 'SystemRole',
+          suggestedValue: roleMatch,
           confidence: 'MEDIUM'
         });
         matchCount += 1;
@@ -227,12 +229,12 @@ class UntaggedVMScanner {
       }
     }
 
-    // Application suggestion from naming convention
-    if (!currentTags.Application) {
-      const appMatch = this._extractApplication(vmName);
+    // AppCI suggestion from naming convention
+    if (!currentTags.AppCI) {
+      const appMatch = this._extractAppCI(vmName);
       if (appMatch) {
         suggestions.push({
-          category: 'Application',
+          category: 'AppCI',
           suggestedValue: appMatch,
           confidence: 'LOW'
         });
@@ -252,6 +254,110 @@ class UntaggedVMScanner {
     }
 
     return suggestions;
+  }
+
+  /**
+   * Extends scanForUntaggedVMs to also check CMDB registration status for each VM.
+   * Classifies VMs as UNTAGGED_REGISTERED, UNTAGGED_UNREGISTERED, or TAGGED_UNREGISTERED.
+   *
+   * @async
+   * @param {string} site - Site code (NDCNG or TULNG).
+   * @returns {Promise<Object>} Enriched scan report with CMDB classification.
+   */
+  async scanWithCMDBCrossRef(site) {
+    this.logger.info('Starting CMDB cross-reference scan', {
+      site,
+      component: 'UntaggedVMScanner'
+    });
+
+    // Step 1: Run existing scan
+    const scanReport = await this.scanForUntaggedVMs(site);
+
+    // Step 2: Get full VM list for tagged-but-unregistered check
+    const endpoints = this.configLoader.getEndpointsForSite(site);
+    const allVMs = await this._getAllVMs(endpoints);
+
+    const classifiedVMs = [];
+
+    // Step 2-3: For each VM, query CMDB
+    for (const vm of allVMs) {
+      const vmId = vm.vm || vm.vmId;
+      const vmName = vm.name || vm.vmName || vmId;
+
+      let cmdbRegistered = false;
+      try {
+        if (this.snowAdapter) {
+          const cmdbResult = await this.snowAdapter.toCallbackPayload({
+            action: 'getCIStatus',
+            vmId,
+            vmName
+          });
+          cmdbRegistered = !!(cmdbResult && cmdbResult.ciStatus && cmdbResult.ciStatus !== 'not_found');
+        }
+      } catch (err) {
+        this.logger.warn('CMDB lookup failed for VM during cross-ref', {
+          vmId,
+          vmName,
+          errorMessage: err.message,
+          component: 'UntaggedVMScanner'
+        });
+      }
+
+      // Determine tag status
+      const untaggedEntry = scanReport.untaggedVMs.find(u => u.vmId === vmId);
+      const isUntagged = !!untaggedEntry;
+
+      // Step 3: Classify
+      let classification;
+      if (isUntagged && cmdbRegistered) {
+        classification = 'UNTAGGED_REGISTERED';
+      } else if (isUntagged && !cmdbRegistered) {
+        classification = 'UNTAGGED_UNREGISTERED';
+      } else if (!isUntagged && !cmdbRegistered) {
+        classification = 'TAGGED_UNREGISTERED';
+      } else {
+        continue; // tagged and registered — skip
+      }
+
+      let currentTags = {};
+      if (untaggedEntry) {
+        currentTags = untaggedEntry.currentTags || {};
+      } else {
+        try {
+          currentTags = await this.tagOperations.getTags(vmId, site);
+        } catch (err) {
+          // Best effort
+        }
+      }
+
+      classifiedVMs.push({
+        vmId,
+        vmName,
+        classification,
+        cmdbRegistered,
+        currentTags,
+        missingCategories: untaggedEntry ? untaggedEntry.missingCategories : [],
+        suggestions: untaggedEntry ? untaggedEntry.suggestions : []
+      });
+    }
+
+    const result = {
+      ...scanReport,
+      classifiedVMs,
+      untaggedRegistered: classifiedVMs.filter(v => v.classification === 'UNTAGGED_REGISTERED').length,
+      untaggedUnregistered: classifiedVMs.filter(v => v.classification === 'UNTAGGED_UNREGISTERED').length,
+      taggedUnregistered: classifiedVMs.filter(v => v.classification === 'TAGGED_UNREGISTERED').length
+    };
+
+    this.logger.info('CMDB cross-reference scan completed', {
+      site,
+      untaggedRegistered: result.untaggedRegistered,
+      untaggedUnregistered: result.untaggedUnregistered,
+      taggedUnregistered: result.taggedUnregistered,
+      component: 'UntaggedVMScanner'
+    });
+
+    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -311,13 +417,13 @@ class UntaggedVMScanner {
   }
 
   /**
-   * Extracts application code from VM name.
+   * Extracts AppCI code from VM name.
    *
    * @private
    * @param {string} vmName - VM name.
-   * @returns {string|null} Extracted application code or null.
+   * @returns {string|null} Extracted AppCI code or null.
    */
-  _extractApplication(vmName) {
+  _extractAppCI(vmName) {
     const match = vmName.match(/([A-Z]{3,6}\d{3})/);
     return match ? match[1] : null;
   }

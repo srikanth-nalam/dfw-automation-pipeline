@@ -1,0 +1,22 @@
+{
+  "name": "com.dfw.automation",
+  "displayName": "DFW Automation Pipeline",
+  "version": "2.0.0",
+  "description": "NSX Distributed Firewall Automation — Tag-driven lifecycle management",
+  "vendor": "Enterprise Infrastructure & Cloud Security",
+  "platform": {
+    "vro": "8.x",
+    "vcf": "9.x",
+    "nsx": "4.x"
+  },
+  "dependencies": [],
+  "actions": {
+    "com.dfw.shared": ["ConfigLoader", "Logger", "CorrelationContext", "RetryHandler", "CircuitBreaker", "RestClient", "PayloadValidator", "ErrorFactory", "RateLimiter"],
+    "com.dfw.tags": ["TagOperations", "TagCardinalityEnforcer", "TagPropagationVerifier", "UntaggedVMScanner"],
+    "com.dfw.groups": ["GroupMembershipVerifier", "GroupReconciler"],
+    "com.dfw.dfw": ["DFWPolicyValidator", "PolicyDeployer", "RuleConflictDetector", "RuleLifecycleManager", "RuleRegistry", "RuleReviewScheduler"],
+    "com.dfw.cmdb": ["CMDBValidator"],
+    "com.dfw.lifecycle": ["LifecycleOrchestrator", "Day0Orchestrator", "Day2Orchestrator", "DayNOrchestrator", "BulkTagOrchestrator", "DriftDetectionWorkflow", "ImpactAnalysisAction", "LegacyOnboardingOrchestrator", "MigrationVerifier", "MigrationBulkTagger", "QuarantineOrchestrator", "SagaCoordinator", "DeadLetterQueue"],
+    "com.dfw.adapters": ["NsxApiAdapter", "SnowPayloadAdapter", "VcenterApiAdapter"]
+  }
+}

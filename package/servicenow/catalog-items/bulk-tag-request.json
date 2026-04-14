@@ -1,0 +1,102 @@
+{
+  "name": "Bulk Tag Request",
+  "shortDescription": "Apply tag changes to multiple VMs in a single request",
+  "description": "Bulk tag remediation for applying consistent tag changes across multiple virtual machines. Supports CSV upload for VM lists, performs per-VM impact analysis, applies tags in controlled batches with rate limiting, and generates a comprehensive summary report.",
+  "category": "Infrastructure / Virtual Machines",
+  "catalogName": "Service Catalog",
+  "active": true,
+  "approvalRequired": true,
+  "approvalGroup": "Change Advisory Board",
+  "fulfillmentGroup": "Cloud Infrastructure Operations",
+  "sla": {
+    "responseTime": "4 hours",
+    "resolutionTime": "2 business days"
+  },
+  "vroWorkflow": "DFW-BulkTag-Remediation",
+  "vroEndpoint": "vRO_DFW_Automation",
+  "variables": [
+    {
+      "name": "vm_list",
+      "label": "VM List (CSV)",
+      "type": "attachment",
+      "mandatory": true,
+      "helpText": "Upload a CSV file with columns: vm_name, Region, SecurityZone, Environment, AppCI, SystemRole. Maximum 500 VMs per request.",
+      "order": 100
+    },
+    {
+      "name": "operation_type",
+      "label": "Operation Type",
+      "type": "select",
+      "mandatory": true,
+      "choices": [
+        {"value": "apply_tags", "label": "Apply Tags — Set specified tag values"},
+        {"value": "remediate_drift", "label": "Remediate Drift — Sync tags to CMDB state"},
+        {"value": "update_category", "label": "Update Category — Change a single tag category across all VMs"}
+      ],
+      "helpText": "Type of bulk operation to perform",
+      "order": 200
+    },
+    {
+      "name": "target_region",
+      "label": "Target Region (if single category update)",
+      "type": "select",
+      "mandatory": false,
+      "choices": [
+        {"value": "NDCNG", "label": "North Data Center Next Generation"},
+        {"value": "TULNG", "label": "Tulsa Data Center Next Generation"}
+      ],
+      "helpText": "Required when Operation Type is 'Update Category' and target category is Region",
+      "order": 300
+    },
+    {
+      "name": "target_security_zone",
+      "label": "Target Security Zone (if single category update)",
+      "type": "select",
+      "mandatory": false,
+      "choices": [
+        {"value": "Greenzone", "label": "Greenzone"},
+        {"value": "DMZ", "label": "DMZ"},
+        {"value": "Restricted", "label": "Restricted"},
+        {"value": "Management", "label": "Management"},
+        {"value": "External", "label": "External"}
+      ],
+      "helpText": "Required when Operation Type is 'Update Category' and target category is SecurityZone",
+      "order": 400
+    },
+    {
+      "name": "target_environment",
+      "label": "Target Environment (if single category update)",
+      "type": "select",
+      "mandatory": false,
+      "choices": [
+        {"value": "Production", "label": "Production"},
+        {"value": "Pre-Production", "label": "Pre-Production"},
+        {"value": "UAT", "label": "UAT"},
+        {"value": "Staging", "label": "Staging"},
+        {"value": "Development", "label": "Development"},
+        {"value": "Sandbox", "label": "Sandbox"},
+        {"value": "DR", "label": "Disaster Recovery"}
+      ],
+      "helpText": "Required when Operation Type is 'Update Category' and target category is Environment",
+      "order": 500
+    },
+    {
+      "name": "dry_run",
+      "label": "Dry Run",
+      "type": "checkbox",
+      "mandatory": false,
+      "defaultValue": true,
+      "helpText": "When checked, generates an impact report without applying changes. Uncheck to apply changes.",
+      "order": 600
+    },
+    {
+      "name": "justification",
+      "label": "Business Justification",
+      "type": "textarea",
+      "mandatory": true,
+      "maxLength": 2000,
+      "helpText": "Business justification for the bulk tag operation",
+      "order": 700
+    }
+  ]
+}

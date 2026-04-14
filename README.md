@@ -1,7 +1,7 @@
 # NSX DFW Automation Pipeline
 
 ![CI](https://img.shields.io/github/actions/workflow/status/srikanth-nalam/dfw-automation-pipeline/ci.yml?branch=main&label=CI)
-![Coverage](https://img.shields.io/badge/coverage-80%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green)
 
@@ -46,9 +46,29 @@ flowchart LR
     D -->|Callback| A
 ```
 
+## 5-Tag Security Taxonomy
+
+The pipeline enforces a mandatory 5-tag security taxonomy aligned with the client security architecture:
+
+| Tag | NSX Scope | Description |
+|-----|-----------|-------------|
+| **Region** | Region | Geographic site identifier (NDCNG, TULNG) |
+| **SecurityZone** | SecurityZone | Network security zone (DMZ, Internal, Restricted, Management) |
+| **Environment** | Environment | Deployment lifecycle stage (Production, Pre-Production, Development, etc.) |
+| **AppCI** | AppCI | CMDB application CI reference |
+| **SystemRole** | SystemRole | Workload function (WebServer, AppServer, Database, etc.) |
+
+Optional tags: **Compliance** (PCI, HIPAA, SOX), **DataClassification** (Public, Internal, Confidential, Restricted), **CostCenter** (financial chargeback).
+
 ## Key Features
 
-- **Tag-Driven Micro-Segmentation** — Day 0 / Day 2 / Day N lifecycle management via NSX tags
+- **Tag-Driven Micro-Segmentation** — Day 0 / Day 2 / Day N lifecycle management via NSX tags with 5-tag mandatory taxonomy
+- **CMDB Data Quality Validation** — Scheduled CMDB scans validating 5-tag completeness with gap reports and remediation tasks
+- **DFW Rule Lifecycle Management** — Full state machine (REQUESTED through CERTIFIED) with audit trail and periodic review
+- **Rule Registry and Tracking** — Custom `x_dfw_rule_registry` table with unique DFW-R-XXXX identifiers
+- **Migration Bulk Tagging** — Manifest-based wave processing for Greenzone VM migration events
+- **Periodic Rule Review** — Scheduled scans, owner notifications, escalation, and auto-expiry for rule certification
+- **CMDB-Driven Event Sync** — Business rule on `cmdb_ci_vm_instance` triggers Day-2 tag synchronization
 - **Emergency Quarantine** — Break-glass VM isolation with auto-expiry for security incidents
 - **Bulk Tag Operations** — Batch tag remediation with configurable concurrency and dry-run mode
 - **Drift Detection** — Scheduled tag drift scanning with automatic remediation
@@ -60,6 +80,7 @@ flowchart LR
 - **Saga-Based Rollback** — Distributed transaction coordination with compensating actions
 - **Circuit Breaker & Retry** — Resilience patterns protecting NSX, vCenter, and ServiceNow integrations
 - **Policy-as-Code** — DFW rules, security groups, and tag dictionaries stored as version-controlled YAML
+- **VRA Package Deployment** — Structured vRO package at `package/` for Aria Automation import
 
 ## Quick Start
 
@@ -108,6 +129,8 @@ dfw-automation-pipeline/
 │   │   │   ├── dfw/             # DFW policy and rule management
 │   │   │   │   ├── DFWPolicyValidator.js   # Realized-state coverage validation
 │   │   │   │   └── RuleConflictDetector.js # Shadow, contradiction, duplicate detection
+│   │   │   ├── cmdb/            # CMDB validation
+│   │   │   │   └── CMDBValidator.js        # CMDB 5-tag validation and gap reports
 │   │   │   └── lifecycle/       # Orchestration and saga coordination
 │   │   │       ├── SagaCoordinator.js      # Distributed transaction rollback
 │   │   │       ├── BulkTagOrchestrator.js  # Bulk tag ops with batching and concurrency
@@ -115,15 +138,23 @@ dfw-automation-pipeline/
 │   │   │       ├── ImpactAnalysisAction.js # Pre-approval read-only impact analysis
 │   │   │       ├── LegacyOnboardingOrchestrator.js # CSV-based legacy VM onboarding
 │   │   │       ├── MigrationVerifier.js    # Post-vMotion tag preservation check
-│   │   │       └── QuarantineOrchestrator.js # Emergency VM quarantine with auto-expiry
+│   │   │       ├── MigrationBulkTagger.js  # Manifest-based migration wave tagging
+│   │   │       ├── QuarantineOrchestrator.js # Emergency VM quarantine with auto-expiry
+│   │   │       ├── RuleLifecycleManager.js # DFW rule lifecycle state machine
+│   │   │       ├── RuleRegistry.js         # Rule tracking with DFW-R-XXXX IDs
+│   │   │       ├── RuleRequestPipeline.js  # Unified rule intake from 4 channels
+│   │   │       └── RuleReviewScheduler.js  # Periodic rule certification and expiry
 │   │   └── workflows/           # vRO workflow definitions
 │   ├── servicenow/
 │   │   └── catalog/
-│   │       └── client-scripts/  # ServiceNow catalog form scripts
-│   │           ├── vmBuildRequest_onLoad.js      # VM build form initialization
-│   │           ├── tagUpdateRequest_onLoad.js    # Tag update form initialization
-│   │           ├── quarantineRequest_onLoad.js   # Emergency quarantine form
-│   │           └── bulkTagRequest_onLoad.js      # Bulk tag remediation form
+│   │       ├── client-scripts/  # ServiceNow catalog form scripts
+│   │       │   ├── vmBuildRequest_onLoad.js      # VM build form initialization
+│   │       │   ├── tagUpdateRequest_onLoad.js    # Tag update form initialization
+│   │       │   ├── quarantineRequest_onLoad.js   # Emergency quarantine form
+│   │       │   ├── bulkTagRequest_onLoad.js      # Bulk tag remediation form
+│   │       │   └── ruleRequest_onLoad.js         # DFW rule request form
+│   │       └── business-rules/  # ServiceNow business rules
+│   │           └── cmdbTagSyncRule.js            # CMDB change-driven tag sync
 │   └── adapters/                # External system adapters
 ├── tests/
 │   ├── unit/                    # Unit tests (Jest)
@@ -148,6 +179,13 @@ dfw-automation-pipeline/
 │   ├── TEST-STRATEGY.md         # Test Strategy
 │   ├── RUNBOOK.md               # Operations Runbook
 │   └── diagrams/                # Mermaid architecture diagrams
+├── package/
+│   ├── com.dfw.automation/      # VRA package for Aria Automation import
+│   │   ├── actions/             # All vRO actions by module
+│   │   ├── workflows/           # Workflow XML definitions
+│   │   └── config-elements/     # Configuration element templates
+│   ├── scripts/                 # Package import/export scripts
+│   └── servicenow/              # ServiceNow update sets
 ├── .github/workflows/ci.yml     # GitHub Actions CI pipeline
 ├── jest.config.js               # Jest test configuration
 ├── .eslintrc.json               # ESLint rules
@@ -206,13 +244,36 @@ npm run test:unit
 npm run test:integration
 
 # Coverage targets:
-#   Lines:      80%
-#   Branches:   70%
-#   Functions:  80%
-#   Statements: 80%
+#   Lines:      95%+
+#   Branches:   95%+
+#   Functions:  95%+
+#   Statements: 95%+
+#
+# Test suites: 54 | Tests: 1161+
 ```
 
 Test results and coverage reports are written to the `coverage/` directory in `text`, `lcov`, and `clover` formats.
+
+## VRA Package Deployment
+
+The `package/` directory contains a complete VRA deployment package for VMware Aria Automation Orchestrator. This provides a streamlined deployment path for all pipeline components:
+
+```bash
+# Import via CLI
+cd package/
+./scripts/import-package.sh --host https://vro-host:443 --user admin
+
+# Or import via Orchestrator UI:
+# Administration > Packages > Import Package > select package/com.dfw.automation/
+```
+
+The package includes:
+- All vRO actions (shared utilities, tag operations, group operations, DFW policy, lifecycle orchestrators, CMDB validation)
+- 7 workflow definitions (Day0, Day2, DayN, CMDBValidation, RuleLifecycle, RuleReview, MigrationBulkTag)
+- Configuration element templates with vault references
+- ServiceNow update sets for tables, business rules, catalog items, and scheduled jobs
+
+See the **[Developer Deployment Guide](docs/DEVELOPER-GUIDE.md)** for detailed import instructions and post-import configuration.
 
 ## Importing into vRO 8.x
 

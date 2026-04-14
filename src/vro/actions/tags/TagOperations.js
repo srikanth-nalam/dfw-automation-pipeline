@@ -65,7 +65,7 @@ class TagOperations {
    * @async
    * @param {string} vmId - The NSX external ID of the virtual machine.
    * @param {Object.<string, string|string[]>} tags - Desired tag map.
-   *   Example: `{ Application: 'APP001', Tier: 'Web', Compliance: ['PCI'] }`
+   *   Example: `{ AppCI: 'APP001', SystemRole: 'Web', Compliance: ['PCI'] }`
    * @param {string} site - Site identifier used to resolve the NSX Manager URL.
    * @returns {Promise<{applied: boolean, delta: {toAdd: Array, toRemove: Array}, currentTags: Object, finalTags: Object}>}
    *   Result describing what was (or was not) changed.
@@ -73,11 +73,11 @@ class TagOperations {
    *
    * @example
    * const result = await tagOps.applyTags('vm-123', {
-   *   Application: 'APP001',
-   *   Tier: 'Web',
+   *   Region: 'NDCNG',
+   *   SecurityZone: 'Greenzone',
    *   Environment: 'Production',
-   *   Compliance: ['PCI'],
-   *   DataClassification: 'Confidential'
+   *   AppCI: 'APP001',
+   *   SystemRole: 'Web'
    * }, 'site-east');
    */
   async applyTags(vmId, tags, site) {
@@ -144,7 +144,7 @@ class TagOperations {
    * @async
    * @param {string} vmId - The NSX external ID of the virtual machine.
    * @param {string[]} tagCategories - Array of category (scope) names to
-   *   remove (e.g. `['Application', 'Compliance']`).
+   *   remove (e.g. `['AppCI', 'Compliance']`).
    * @param {string} site - Site identifier.
    * @returns {Promise<{removed: boolean, removedCategories: string[], currentTags: Object, finalTags: Object}>}
    *   Result describing what was removed.
@@ -211,7 +211,7 @@ class TagOperations {
    *
    * @example
    * const tags = await tagOps.getCurrentTags('vm-123', 'site-east');
-   * // tags => { Application: 'APP001', Compliance: ['PCI', 'HIPAA'] }
+   * // tags => { AppCI: 'APP001', Compliance: ['PCI', 'HIPAA'] }
    */
   async getCurrentTags(vmId, site) {
     const correlationCtx = { vmId, site, operation: 'getCurrentTags' };
@@ -248,7 +248,7 @@ class TagOperations {
    *
    * @example
    * const result = await tagOps.updateTags('vm-123', {
-   *   Application: 'APP002',
+   *   AppCI: 'APP002',
    *   Environment: 'Staging'
    * }, 'site-east');
    */

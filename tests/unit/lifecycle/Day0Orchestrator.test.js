@@ -99,9 +99,11 @@ describe('Day0Orchestrator', () => {
     },
     site: 'NDCNG',
     tags: {
-      Application: 'APP001',
-      Tier: 'Web',
+      Region: 'NDCNG',
+      SecurityZone: 'Greenzone',
       Environment: 'Production',
+      AppCI: 'APP001',
+      SystemRole: 'Web',
       Compliance: ['PCI'],
       DataClassification: 'Confidential',
       CostCenter: 'CC-IT-INFRA-001'
@@ -319,7 +321,7 @@ describe('Day0Orchestrator', () => {
   // Sub-step: applyTags
   // ---------------------------------------------------------------------------
   test('applyTags delegates to tagOperations', async () => {
-    const tags = { Application: 'APP001', Tier: 'Web' };
+    const tags = { AppCI: 'APP001', SystemRole: 'Web' };
     const result = await orchestrator.applyTags('vm-123', tags, 'NDCNG');
 
     expect(result.vmId).toBe('vm-123');
@@ -382,6 +384,7 @@ describe('Day0Orchestrator', () => {
   test('checkExistingVM allows provisioning when existing VM has retired CI', async () => {
     deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-123' }]);
     deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'Retired' });
+    deps.tagOperations.getCurrentTags.mockResolvedValue({ AppCI: 'OLD-APP' });
     const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
 
     const result = await orchestrator.checkExistingVM(validPayload, endpoints);
@@ -390,6 +393,8 @@ describe('Day0Orchestrator', () => {
     expect(result.action).toBe('retag');
     expect(result.oldVmId).toBe('vm-old-123');
     expect(result.oldCiStatus).toBe('Retired');
+    expect(result.rebuildDetected).toBe(true);
+    expect(result.staleTagsPurged).toBe(true);
   });
 
   test('checkExistingVM throws DFW-6210 when existing VM has active CI', async () => {
@@ -412,5 +417,69 @@ describe('Day0Orchestrator', () => {
       'Existing VM check failed, proceeding with provisioning',
       expect.any(Object)
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Rebuild detection
+  // ---------------------------------------------------------------------------
+  test('rebuild detection purges stale tags from old VM MoRef', async () => {
+    deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-rebuild' }]);
+    deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'Decommissioned' });
+    deps.tagOperations.getCurrentTags.mockResolvedValue({
+      AppCI: 'OLD-APP',
+      Environment: 'Production'
+    });
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.rebuildDetected).toBe(true);
+    expect(result.staleTagsPurged).toBe(true);
+    expect(deps.tagOperations.removeTags).toHaveBeenCalledWith(
+      'vm-old-rebuild',
+      ['AppCI', 'Environment'],
+      'NDCNG'
+    );
+  });
+
+  test('rebuild detection handles unknown CI status (no CMDB record)', async () => {
+    deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-unreg' }]);
+    deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'unknown' });
+    deps.tagOperations.getCurrentTags.mockResolvedValue({ AppCI: 'STALE' });
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.existingVmFound).toBe(true);
+    expect(result.rebuildDetected).toBe(false);
+    expect(result.staleTagsPurged).toBe(true);
+    expect(deps.logger.warn).toHaveBeenCalledWith(
+      'Unregistered VM with same name detected',
+      expect.any(Object)
+    );
+  });
+
+  test('rebuild detection continues when tag purge fails', async () => {
+    deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-fail' }]);
+    deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'Retired' });
+    deps.tagOperations.getCurrentTags.mockRejectedValue(new Error('NSX error'));
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.existingVmFound).toBe(true);
+    expect(result.staleTagsPurged).toBe(false);
+  });
+
+  test('rebuild detection skips tag purge when no tags exist', async () => {
+    deps.restClient.get.mockResolvedValue([{ vm: 'vm-old-notags' }]);
+    deps.snowAdapter.toCallbackPayload.mockReturnValue({ ciStatus: 'Retired' });
+    deps.tagOperations.getCurrentTags.mockResolvedValue({});
+    const endpoints = { vcenterUrl: 'https://vcenter-ndcng.test' };
+
+    const result = await orchestrator.checkExistingVM(validPayload, endpoints);
+
+    expect(result.staleTagsPurged).toBe(false);
+    expect(deps.tagOperations.removeTags).not.toHaveBeenCalled();
   });
 });

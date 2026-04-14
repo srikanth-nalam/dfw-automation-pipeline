@@ -1,0 +1,44 @@
+{
+  "name": "DFW Rule Review — Weekly Scan",
+  "description": "Weekly scheduled job that triggers the DFW Rule Review workflow in vRO. Identifies DFW rules approaching or past their review date, generates review notifications for rule owners, flags expired rules for deactivation, and produces a governance compliance report.",
+  "active": true,
+  "runAs": "x_dfw.service_account",
+  "schedule": {
+    "type": "weekly",
+    "dayOfWeek": "monday",
+    "time": "04:00:00",
+    "timezone": "America/Chicago"
+  },
+  "script": {
+    "type": "rest_trigger",
+    "description": "Invokes the vRO DFW-RuleReview workflow for each active site",
+    "restMessage": "vRO_DFW_Automation",
+    "httpMethod": "POST",
+    "endpoint": "/api/workflows/com.dfw.automation.rule-review/executions",
+    "payload": {
+      "site": "ALL",
+      "lookAheadDays": 30,
+      "autoDeactivateExpired": false
+    }
+  },
+  "notification": {
+    "onFailure": {
+      "recipients": ["dfw-operations@company.com", "network-security@company.com"],
+      "template": "DFW Scheduled Job Failure"
+    },
+    "onSuccess": {
+      "recipients": ["network-security@company.com", "firewall-governance@company.com"],
+      "template": "DFW Rule Review Report",
+      "condition": "reviewDueCount > 0 || expiredCount > 0"
+    }
+  },
+  "logging": {
+    "table": "x_dfw_audit_log",
+    "category": "RULE_REVIEW",
+    "retentionDays": 90
+  },
+  "timeout": {
+    "minutes": 30,
+    "onTimeout": "abort_and_notify"
+  }
+}

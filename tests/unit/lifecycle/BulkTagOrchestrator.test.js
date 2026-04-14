@@ -10,9 +10,11 @@ describe('BulkTagOrchestrator', () => {
     deps = {
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
-          Environment: 'Production'
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
+          Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web'
         }),
         applyTags: jest.fn().mockResolvedValue({ applied: true }),
         removeTags: jest.fn().mockResolvedValue({ removed: true }),
@@ -63,8 +65,8 @@ describe('BulkTagOrchestrator', () => {
     batchSize: 10,
     concurrency: 5,
     vms: [
-      { vmId: 'vm-1', vmName: 'VM-001', tags: { Tier: 'App' } },
-      { vmId: 'vm-2', vmName: 'VM-002', tags: { Tier: 'DB' } },
+      { vmId: 'vm-1', vmName: 'VM-001', tags: { SystemRole: 'App' } },
+      { vmId: 'vm-2', vmName: 'VM-002', tags: { SystemRole: 'DB' } },
       { vmId: 'vm-3', vmName: 'VM-003', tags: { Environment: 'Staging' } }
     ],
     callbackUrl: 'https://snow.test/callback',
@@ -87,9 +89,9 @@ describe('BulkTagOrchestrator', () => {
   // Per-VM error isolation
   test('isolates per-VM errors - one failure does not block others', async () => {
     deps.tagOperations.getTags
-      .mockResolvedValueOnce({ Application: 'APP001', Tier: 'Web' })
+      .mockResolvedValueOnce({ AppCI: 'APP001', SystemRole: 'Web' })
       .mockRejectedValueOnce(new Error('NSX error for vm-2'))
-      .mockResolvedValueOnce({ Application: 'APP001', Tier: 'Web' });
+      .mockResolvedValueOnce({ AppCI: 'APP001', SystemRole: 'Web' });
 
     const report = await orchestrator.executeBulk(buildPayload());
 
@@ -166,12 +168,12 @@ describe('BulkTagOrchestrator', () => {
   // Skipped VMs (no-op)
   test('marks VMs as skipped when already in desired state', async () => {
     deps.tagOperations.getTags.mockResolvedValue({
-      Application: 'APP001',
-      Tier: 'App'
+      AppCI: 'APP001',
+      SystemRole: 'App'
     });
 
     const report = await orchestrator.executeBulk(buildPayload({
-      vms: [{ vmId: 'vm-1', vmName: 'VM-001', tags: { Tier: 'App' } }]
+      vms: [{ vmId: 'vm-1', vmName: 'VM-001', tags: { SystemRole: 'App' } }]
     }));
 
     expect(report.skippedCount).toBe(1);

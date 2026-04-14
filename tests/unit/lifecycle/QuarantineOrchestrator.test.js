@@ -52,9 +52,11 @@ describe('QuarantineOrchestrator', () => {
       },
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
-          Environment: 'Production'
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
+          Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web'
         }),
         applyTags: jest.fn().mockResolvedValue({ applied: true }),
         removeTags: jest.fn().mockResolvedValue({ removed: true }),

@@ -129,11 +129,11 @@ const REQUEST_TYPE_RULES = Object.freeze({
  * @constant {string[]}
  */
 const REQUIRED_TAG_FIELDS = [
-  'Application',
-  'Tier',
+  'Region',
+  'SecurityZone',
   'Environment',
-  'Compliance',
-  'DataClassification'
+  'AppCI',
+  'SystemRole'
 ];
 
 /**
@@ -141,7 +141,7 @@ const REQUIRED_TAG_FIELDS = [
  *
  * @constant {string[]}
  */
-const OPTIONAL_TAG_FIELDS = ['CostCenter'];
+const OPTIONAL_TAG_FIELDS = ['Compliance', 'DataClassification', 'CostCenter'];
 
 /**
  * All recognised tag categories (for detecting unknown fields).
@@ -190,9 +190,11 @@ const PAYLOAD_SCHEMA = {
       type: 'object',
       required: REQUIRED_TAG_FIELDS,
       properties: {
-        Application: { type: 'string', minLength: 1 },
-        Tier: { type: 'string', minLength: 1 },
+        Region: { type: 'string', enum: ['NDCNG', 'TULNG'] },
+        SecurityZone: { type: 'string', enum: ['Greenzone', 'DMZ', 'Restricted', 'Management', 'External'] },
         Environment: { type: 'string', minLength: 1 },
+        AppCI: { type: 'string', minLength: 1 },
+        SystemRole: { type: 'string', enum: ['Web', 'Application', 'Database', 'Middleware', 'Utility', 'SharedServices'] },
         Compliance: {
           type: 'array',
           items: { type: 'string', minLength: 1 },
@@ -280,11 +282,11 @@ class PayloadValidator {
    *   vmName: 'srv-web-01',
    *   site: 'NDCNG',
    *   tags: {
-   *     Application: 'WebPortal',
-   *     Tier: 'Web',
+   *     Region: 'NDCNG',
+   *     SecurityZone: 'Greenzone',
    *     Environment: 'Production',
-   *     Compliance: ['PCI'],
-   *     DataClassification: 'Confidential'
+   *     AppCI: 'WebPortal',
+   *     SystemRole: 'Web'
    *   },
    *   callbackUrl: 'https://snow.company.internal/api/callback'
    * });
@@ -551,50 +553,59 @@ class PayloadValidator {
         continue;
       }
 
-      // Type-specific checks
-      if (field === 'Compliance') {
-        if (!Array.isArray(tags[field])) {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4002',
-            `Tag "Compliance" must be an array of strings, got ${typeof tags[field]}`,
-            'tags.Compliance'
-          ));
-        } else if (tags[field].length === 0) {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4001',
-            'Tag "Compliance" array must contain at least one value',
-            'tags.Compliance'
-          ));
-        } else {
-          for (let i = 0; i < tags[field].length; i++) {
-            if (typeof tags[field][i] !== 'string' || tags[field][i].trim() === '') {
-              errors.push(PayloadValidator._makeError(
-                'DFW-4002',
-                `Tag "Compliance[${i}]" must be a non-empty string`,
-                `tags.Compliance[${i}]`
-              ));
-            }
-          }
-        }
+      // All required fields are strings
+      if (typeof tags[field] !== 'string') {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4002',
+          `Tag "${field}" must be a string, got ${typeof tags[field]}`,
+          `tags.${field}`
+        ));
+      } else if (tags[field].trim() === '') {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4001',
+          `Tag "${field}" must not be empty`,
+          `tags.${field}`
+        ));
+      }
+    }
+
+    // Optional fields type checks
+    if (tags.Compliance !== undefined && tags.Compliance !== null) {
+      if (!Array.isArray(tags.Compliance)) {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4002',
+          `Tag "Compliance" must be an array of strings, got ${typeof tags.Compliance}`,
+          'tags.Compliance'
+        ));
+      } else if (tags.Compliance.length === 0) {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4001',
+          'Tag "Compliance" array must contain at least one value',
+          'tags.Compliance'
+        ));
       } else {
-        // String fields
-        if (typeof tags[field] !== 'string') {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4002',
-            `Tag "${field}" must be a string, got ${typeof tags[field]}`,
-            `tags.${field}`
-          ));
-        } else if (tags[field].trim() === '') {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4001',
-            `Tag "${field}" must not be empty`,
-            `tags.${field}`
-          ));
+        for (let i = 0; i < tags.Compliance.length; i++) {
+          if (typeof tags.Compliance[i] !== 'string' || tags.Compliance[i].trim() === '') {
+            errors.push(PayloadValidator._makeError(
+              'DFW-4002',
+              `Tag "Compliance[${i}]" must be a non-empty string`,
+              `tags.Compliance[${i}]`
+            ));
+          }
         }
       }
     }
 
-    // Optional fields type check
+    if (tags.DataClassification !== undefined && tags.DataClassification !== null) {
+      if (typeof tags.DataClassification !== 'string') {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4002',
+          `Tag "DataClassification" must be a string, got ${typeof tags.DataClassification}`,
+          'tags.DataClassification'
+        ));
+      }
+    }
+
     if (tags.CostCenter !== undefined && tags.CostCenter !== null) {
       if (typeof tags.CostCenter !== 'string') {
         errors.push(PayloadValidator._makeError(
@@ -616,40 +627,42 @@ class PayloadValidator {
    * @param {Array}  errors - Accumulator.
    */
   _validatePresentTagFields(tags, errors) {
+    // Check required tag fields that are present
     for (const field of REQUIRED_TAG_FIELDS) {
       const value = tags[field];
       if (value === undefined || value === null) {
         continue;
       }
 
-      if (field === 'Compliance') {
-        if (!Array.isArray(value)) {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4002',
-            `Tag "Compliance" must be an array of strings, got ${typeof value}`,
-            'tags.Compliance'
-          ));
-        } else if (value.length === 0) {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4001',
-            'Tag "Compliance" array must contain at least one value',
-            'tags.Compliance'
-          ));
-        }
-      } else {
-        if (typeof value !== 'string') {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4002',
-            `Tag "${field}" must be a string, got ${typeof value}`,
-            `tags.${field}`
-          ));
-        } else if (value.trim() === '') {
-          errors.push(PayloadValidator._makeError(
-            'DFW-4001',
-            `Tag "${field}" must not be empty`,
-            `tags.${field}`
-          ));
-        }
+      if (typeof value !== 'string') {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4002',
+          `Tag "${field}" must be a string, got ${typeof value}`,
+          `tags.${field}`
+        ));
+      } else if (value.trim() === '') {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4001',
+          `Tag "${field}" must not be empty`,
+          `tags.${field}`
+        ));
+      }
+    }
+
+    // Check optional Compliance field when present
+    if (tags.Compliance !== undefined && tags.Compliance !== null) {
+      if (!Array.isArray(tags.Compliance)) {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4002',
+          `Tag "Compliance" must be an array of strings, got ${typeof tags.Compliance}`,
+          'tags.Compliance'
+        ));
+      } else if (tags.Compliance.length === 0) {
+        errors.push(PayloadValidator._makeError(
+          'DFW-4001',
+          'Tag "Compliance" array must contain at least one value',
+          'tags.Compliance'
+        ));
       }
     }
   }
@@ -705,7 +718,7 @@ class PayloadValidator {
       return;
     }
 
-    const singleValueFields = ['Application', 'Tier', 'Environment', 'DataClassification', 'CostCenter'];
+    const singleValueFields = ['Region', 'SecurityZone', 'Environment', 'AppCI', 'SystemRole', 'DataClassification', 'CostCenter'];
 
     for (const field of singleValueFields) {
       const value = payload.tags[field];

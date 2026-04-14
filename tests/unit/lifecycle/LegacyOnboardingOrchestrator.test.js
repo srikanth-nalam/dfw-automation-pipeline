@@ -58,9 +58,11 @@ describe('LegacyOnboardingOrchestrator', () => {
       {
         vmName: 'LEGACY-VM-001',
         tags: {
-          Application: 'APP001',
-          Tier: 'Web',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web',
           Compliance: ['PCI'],
           DataClassification: 'Confidential'
         }
@@ -68,9 +70,11 @@ describe('LegacyOnboardingOrchestrator', () => {
       {
         vmName: 'LEGACY-VM-002',
         tags: {
-          Application: 'APP002',
-          Tier: 'DB',
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
           Environment: 'Development',
+          AppCI: 'APP002',
+          SystemRole: 'Database',
           Compliance: ['None'],
           DataClassification: 'Internal'
         }
@@ -101,9 +105,11 @@ describe('LegacyOnboardingOrchestrator', () => {
         {
           vmName: 'BAD-VM',
           tags: {
-            Application: 'APP001',
-            Tier: 'InvalidTier',
+            Region: 'NDCNG',
+            SecurityZone: 'Greenzone',
             Environment: 'Production',
+            AppCI: 'APP001',
+            SystemRole: 'InvalidRole',
             Compliance: ['PCI'],
             DataClassification: 'Confidential'
           }
@@ -115,7 +121,7 @@ describe('LegacyOnboardingOrchestrator', () => {
 
     expect(report.dictionaryValidation.invalidEntries).toBe(1);
     expect(report.dictionaryValidation.invalidDetails[0].errors).toEqual(
-      expect.arrayContaining([expect.stringContaining('Invalid Tier')])
+      expect.arrayContaining([expect.stringContaining('Invalid SystemRole')])
     );
   });
 
@@ -126,14 +132,16 @@ describe('LegacyOnboardingOrchestrator', () => {
         {
           vmName: 'VALID-VM',
           tags: {
-            Application: 'APP001', Tier: 'Web', Environment: 'Production',
+            Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production',
+            AppCI: 'APP001', SystemRole: 'Web',
             Compliance: ['PCI'], DataClassification: 'Confidential'
           }
         },
         {
           vmName: 'INVALID-VM',
           tags: {
-            Application: 'APP002', Tier: 'BadTier', Environment: 'BadEnv',
+            Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'BadEnv',
+            AppCI: 'APP002', SystemRole: 'BadRole',
             Compliance: ['None'], DataClassification: 'Internal'
           }
         }
@@ -165,7 +173,7 @@ describe('LegacyOnboardingOrchestrator', () => {
   // Missing vmName
   test('rejects entries without vmName', async () => {
     const payload = buildPayload({
-      vmEntries: [{ tags: { Application: 'APP001', Tier: 'Web', Environment: 'Production', Compliance: ['None'], DataClassification: 'Internal' } }]
+      vmEntries: [{ tags: { Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'Web', Compliance: ['None'], DataClassification: 'Internal' } }]
     });
 
     const report = await orchestrator.onboardLegacyVMs(payload);
@@ -187,7 +195,7 @@ describe('LegacyOnboardingOrchestrator', () => {
   // Missing required tags
   test('rejects entries missing required tag fields', async () => {
     const payload = buildPayload({
-      vmEntries: [{ vmName: 'PARTIAL-VM', tags: { Application: 'APP001' } }]
+      vmEntries: [{ vmName: 'PARTIAL-VM', tags: { AppCI: 'APP001' } }]
     });
 
     const report = await orchestrator.onboardLegacyVMs(payload);
@@ -210,8 +218,8 @@ describe('LegacyOnboardingOrchestrator', () => {
   test('handles case where all entries are invalid', async () => {
     const payload = buildPayload({
       vmEntries: [
-        { vmName: 'BAD-1', tags: { Application: 'APP001', Tier: 'INVALID', Environment: 'Production', Compliance: ['None'], DataClassification: 'Internal' } },
-        { vmName: 'BAD-2', tags: { Application: 'APP002', Tier: 'INVALID', Environment: 'Production', Compliance: ['None'], DataClassification: 'Internal' } }
+        { vmName: 'BAD-1', tags: { Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP001', SystemRole: 'INVALID', Compliance: ['None'], DataClassification: 'Internal' } },
+        { vmName: 'BAD-2', tags: { Region: 'NDCNG', SecurityZone: 'Greenzone', Environment: 'Production', AppCI: 'APP002', SystemRole: 'INVALID', Compliance: ['None'], DataClassification: 'Internal' } }
       ]
     });
 

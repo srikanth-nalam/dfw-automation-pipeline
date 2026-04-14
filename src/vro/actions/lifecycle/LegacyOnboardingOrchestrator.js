@@ -17,8 +17,10 @@ const BulkTagOrchestrator = require('./BulkTagOrchestrator');
  * @private
  */
 const TAG_DICTIONARY = Object.freeze({
-  Tier: ['Web', 'App', 'DB', 'Middleware', 'Infrastructure'],
+  Region: ['NDCNG', 'TULNG'],
+  SecurityZone: ['Greenzone', 'DMZ', 'Restricted', 'Management', 'External'],
   Environment: ['Production', 'Staging', 'Development', 'UAT', 'Sandbox', 'DR'],
+  SystemRole: ['Web', 'Application', 'Database', 'Middleware', 'Utility', 'SharedServices'],
   DataClassification: ['Public', 'Internal', 'Confidential', 'Restricted'],
   Compliance: ['PCI', 'HIPAA', 'SOX', 'GDPR', 'None']
 });
@@ -223,7 +225,7 @@ class LegacyOnboardingOrchestrator {
     }
 
     // Check required tag fields
-    const requiredFields = ['Application', 'Tier', 'Environment', 'Compliance', 'DataClassification'];
+    const requiredFields = ['Region', 'SecurityZone', 'Environment', 'AppCI', 'SystemRole'];
     for (const field of requiredFields) {
       if (!entry.tags[field]) {
         errors.push(`Missing required tag: ${field}`);

@@ -35,7 +35,9 @@
     // -----------------------------------------------------------------------
 
     const VALID_ENVIRONMENTS = ['Production', 'Pre-Production', 'UAT', 'Staging', 'Development', 'Sandbox', 'DR'];
-    const VALID_TIERS = ['Web', 'Application', 'Database', 'Middleware', 'Utility', 'Shared-Services'];
+    const VALID_REGIONS = ['NDCNG', 'TULNG'];
+    const VALID_SECURITY_ZONES = ['Greenzone', 'DMZ', 'Restricted', 'Management', 'External'];
+    const VALID_SYSTEM_ROLES = ['Web', 'Application', 'Database', 'Middleware', 'Utility', 'SharedServices'];
     const VALID_COMPLIANCE = ['PCI', 'HIPAA', 'SOX', 'None'];
     const VALID_DATA_CLASSIFICATIONS = ['Public', 'Internal', 'Confidential', 'Restricted'];
     const VALID_SITES = ['NDCNG', 'TULNG'];
@@ -45,11 +47,11 @@
      * @type {Array.<{field: string, label: string}>}
      */
     const MANDATORY_FIELDS = [
-        { field: 'application',         label: 'Application' },
-        { field: 'tier',                label: 'Tier' },
+        { field: 'region',              label: 'Region' },
+        { field: 'security_zone',       label: 'Security Zone' },
         { field: 'environment',         label: 'Environment' },
-        { field: 'compliance',          label: 'Compliance' },
-        { field: 'data_classification', label: 'Data Classification' },
+        { field: 'app_ci',             label: 'AppCI' },
+        { field: 'system_role',        label: 'System Role' },
         { field: 'site',               label: 'Site' }
     ];
 
@@ -113,9 +115,11 @@
     // -----------------------------------------------------------------------
 
     function validateTagDictionaryValues() {
-        const application = getVariable('application');
-        const tier = getVariable('tier');
+        const region = getVariable('region');
+        const securityZone = getVariable('security_zone');
         const environment = getVariable('environment');
+        const appCi = getVariable('app_ci');
+        const systemRole = getVariable('system_role');
         const compliance = getVariable('compliance');
         const dataClassification = getVariable('data_classification');
         const site = getVariable('site');
@@ -127,6 +131,40 @@
                 message: 'Invalid site value: "' + site + '". Must be one of: ' + VALID_SITES.join(', '),
                 code: 'DFW-4004'
             });
+        }
+
+        // Validate Region against allowed values
+        if (region) {
+            if (VALID_REGIONS.indexOf(region) === -1) {
+                errors.push({
+                    field: 'region',
+                    message: '"' + region + '" is not a valid Region value. Must be one of: ' + VALID_REGIONS.join(', '),
+                    code: 'DFW-4002'
+                });
+            } else if (!validateAgainstDictionary('Region', region)) {
+                errors.push({
+                    field: 'region',
+                    message: 'Region "' + region + '" not found or inactive in Enterprise Tag Dictionary.',
+                    code: 'DFW-4002'
+                });
+            }
+        }
+
+        // Validate SecurityZone against allowed values
+        if (securityZone) {
+            if (VALID_SECURITY_ZONES.indexOf(securityZone) === -1) {
+                errors.push({
+                    field: 'security_zone',
+                    message: '"' + securityZone + '" is not a valid Security Zone value. Must be one of: ' + VALID_SECURITY_ZONES.join(', '),
+                    code: 'DFW-4002'
+                });
+            } else if (!validateAgainstDictionary('SecurityZone', securityZone)) {
+                errors.push({
+                    field: 'security_zone',
+                    message: 'Security Zone "' + securityZone + '" not found or inactive in Enterprise Tag Dictionary.',
+                    code: 'DFW-4002'
+                });
+            }
         }
 
         // Validate Environment against enum and dictionary
@@ -146,24 +184,24 @@
             }
         }
 
-        // Validate Tier against enum and dictionary
-        if (tier) {
-            if (VALID_TIERS.indexOf(tier) === -1) {
+        // Validate SystemRole against enum and dictionary
+        if (systemRole) {
+            if (VALID_SYSTEM_ROLES.indexOf(systemRole) === -1) {
                 errors.push({
-                    field: 'tier',
-                    message: '"' + tier + '" is not a valid Tier value. Check the enterprise tag dictionary.',
+                    field: 'system_role',
+                    message: '"' + systemRole + '" is not a valid System Role value. Check the enterprise tag dictionary.',
                     code: 'DFW-4002'
                 });
-            } else if (!validateAgainstDictionary('Tier', tier)) {
+            } else if (!validateAgainstDictionary('SystemRole', systemRole)) {
                 errors.push({
-                    field: 'tier',
-                    message: 'Tier "' + tier + '" not found or inactive in Enterprise Tag Dictionary.',
+                    field: 'system_role',
+                    message: 'System Role "' + systemRole + '" not found or inactive in Enterprise Tag Dictionary.',
                     code: 'DFW-4002'
                 });
             }
         }
 
-        // Validate Data Classification against enum and dictionary
+        // Validate Data Classification against enum and dictionary (optional)
         if (dataClassification) {
             if (VALID_DATA_CLASSIFICATIONS.indexOf(dataClassification) === -1) {
                 errors.push({
@@ -180,7 +218,7 @@
             }
         }
 
-        // Validate Compliance values (comma-separated, multi-value)
+        // Validate Compliance values (comma-separated, multi-value, optional)
         if (compliance) {
             const complianceValues = compliance.split(',');
             for (let i = 0; i < complianceValues.length; i++) {
@@ -203,11 +241,11 @@
             }
         }
 
-        // Validate Application against dictionary (no fixed enum - dynamic values)
-        if (application && !validateAgainstDictionary('Application', application)) {
+        // Validate AppCI against dictionary (no fixed enum - dynamic values)
+        if (appCi && !validateAgainstDictionary('AppCI', appCi)) {
             errors.push({
-                field: 'application',
-                message: 'Application "' + application + '" not found in Enterprise Tag Dictionary. Register the application code before submitting.',
+                field: 'app_ci',
+                message: 'AppCI "' + appCi + '" not found in Enterprise Tag Dictionary. Register the application code before submitting.',
                 code: 'DFW-4002'
             });
         }
@@ -221,7 +259,7 @@
         const environment = getVariable('environment');
         const compliance = getVariable('compliance');
         const dataClassification = getVariable('data_classification');
-        const tier = getVariable('tier');
+        const systemRole = getVariable('system_role');
 
         const complianceValues = compliance ? compliance.split(',').map(function (v) { return v.trim(); }) : [];
 
@@ -302,20 +340,20 @@
             });
         }
 
-        // Rule 8: Database tier in Sandbox requires explicit approval
-        if (tier === 'Database' && environment === 'Sandbox') {
+        // Rule 8: Database system role in Sandbox requires explicit approval
+        if (systemRole === 'Database' && environment === 'Sandbox') {
             errors.push({
-                field: 'tier',
-                message: 'Database tier workloads in Sandbox require explicit approval. Consider using Development or Staging instead.',
+                field: 'system_role',
+                message: 'Database system role workloads in Sandbox require explicit approval. Consider using Development or Staging instead.',
                 code: 'DFW-4003'
             });
         }
 
-        // Rule 9: Database tier requires explicit compliance selection (not None)
-        if (tier === 'Database' && (!compliance || compliance === '' || compliance === 'None')) {
+        // Rule 9: Database system role requires explicit compliance selection (not None)
+        if (systemRole === 'Database' && (!compliance || compliance === '' || compliance === 'None')) {
             errors.push({
                 field: 'compliance',
-                message: 'Database tier workloads require an explicit compliance framework. "None" is not permitted for Database tier.',
+                message: 'Database system role workloads require an explicit compliance framework. "None" is not permitted for Database system role.',
                 code: 'DFW-4003'
             });
         }
@@ -346,12 +384,14 @@
      */
     function validateDynamicConflictRules() {
         const fieldMap = {
-            'Tier': 'tier',
+            'Region': 'region',
+            'SecurityZone': 'security_zone',
             'Environment': 'environment',
+            'AppCI': 'app_ci',
+            'SystemRole': 'system_role',
             'DataClassification': 'data_classification',
             'Compliance': 'compliance',
-            'CostCenter': 'cost_center',
-            'Application': 'application'
+            'CostCenter': 'cost_center'
         };
 
         const gr = new GlideRecord('u_tag_conflict_rules');
@@ -420,7 +460,9 @@
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         VALID_ENVIRONMENTS: ['Production', 'Pre-Production', 'UAT', 'Staging', 'Development', 'Sandbox', 'DR'],
-        VALID_TIERS: ['Web', 'Application', 'Database', 'Middleware', 'Utility', 'Shared-Services'],
+        VALID_REGIONS: ['NDCNG', 'TULNG'],
+        VALID_SECURITY_ZONES: ['Greenzone', 'DMZ', 'Restricted', 'Management', 'External'],
+        VALID_SYSTEM_ROLES: ['Web', 'Application', 'Database', 'Middleware', 'Utility', 'SharedServices'],
         VALID_COMPLIANCE: ['PCI', 'HIPAA', 'SOX', 'None'],
         VALID_DATA_CLASSIFICATIONS: ['Public', 'Internal', 'Confidential', 'Restricted'],
         VALID_SITES: ['NDCNG', 'TULNG']

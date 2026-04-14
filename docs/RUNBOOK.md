@@ -20,6 +20,10 @@
 8. [Monitoring Dashboard Interpretation](#8-monitoring-dashboard-interpretation)
 9. [Escalation Matrix](#9-escalation-matrix)
 10. [Common Error Codes Reference](#10-common-error-codes-reference)
+11. [Running a Hygiene Sweep](#11-running-a-hygiene-sweep)
+12. [Interpreting Hygiene Reports](#12-interpreting-hygiene-reports)
+13. [Handling Manual-Review Items](#13-handling-manual-review-items)
+14. [Emergency: Restoring a Deleted Group from Archive](#14-emergency-restoring-a-deleted-group-from-archive)
 
 ---
 
@@ -622,6 +626,234 @@ Quick reference for the most frequently encountered DFW error codes. For the com
 | DFW-7007 | DFW | Orphaned rule (group with rules but no members) | No | Review group membership criteria; remove orphaned rules |
 | DFW-8001 | Saga | Saga compensation failed | No | Manual cleanup required; check DLQ entry |
 | DFW-9001 | System | Unexpected system error | Yes | Review full stack trace; escalate if recurring |
+
+---
+
+## 11. Running a Hygiene Sweep
+
+The NSX Hygiene Sweep is an automated maintenance workflow that cleans up orphaned security groups, stale DFW rules, drifted tags, phantom VMs, and unregistered VMs. It can be triggered manually via vRO or automatically via a ServiceNow scheduled job.
+
+### 11.1 Scope Options: FULL vs QUICK
+
+| Scope | Tasks Executed | Remediation | Typical Duration | Use Case |
+|-------|---------------|-------------|------------------|----------|
+| FULL | All 6 hygiene tasks with deep analysis | Enabled (deletes orphans, disables stale rules, remediates tags, cleans phantoms, onboards VMs) | 10-20 minutes per site | Weekly scheduled maintenance window |
+| QUICK | Detection only across all 6 tasks | Disabled (report only, no mutations) | 2-5 minutes per site | Daily health check, pre-change validation |
+
+- **FULL scope** should be run during a maintenance window or low-traffic period. It makes mutations (deleting groups, disabling rules, patching tags) and creates ServiceNow incidents for items requiring manual review.
+- **QUICK scope** is safe to run at any time. It performs read-only analysis and produces a report without modifying any NSX or CMDB state.
+
+### 11.2 Manual Trigger via vRO
+
+1. Open the vRO Orchestrator Client.
+2. Navigate to **Workflows > DFW Pipeline > Hygiene > Run Hygiene Sweep**.
+3. Provide the following parameters:
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site` | String | Yes | Target site code: `NDCNG` or `TULNG` |
+| `scope` | String | Yes | `FULL` or `QUICK` |
+| `dryRun` | Boolean | Yes | `true` for dry run (no mutations), `false` for live run |
+| `callbackUrl` | String | No | ServiceNow callback URL for result delivery |
+
+4. Execute the workflow. Monitor progress in the vRO execution log or Splunk.
+
+**Recommended approach -- dry run first, then live:**
+
+1. Run with `dryRun=true` and `scope=FULL` to preview all changes that would be made.
+2. Review the dry run report. Verify that the orphan groups, stale rules, and drifted VMs identified are genuinely eligible for cleanup.
+3. If the dry run report is satisfactory, run again with `dryRun=false` to execute the live sweep.
+
+### 11.3 Manual Trigger via ServiceNow
+
+1. Navigate to **Self-Service > Service Catalog > DFW Automation > NSX Hygiene Sweep Request**.
+2. Fill in the catalog form:
+   - **Site:** Select the target site
+   - **Scope:** Select FULL or QUICK
+   - **Dry Run:** Check the box for a dry-run preview
+   - **Justification:** Enter a brief reason for the sweep (e.g., "Weekly scheduled maintenance")
+3. Submit the request. A RITM is created and the vRO workflow is triggered automatically.
+4. The sweep report is posted back to the RITM work notes upon completion.
+
+### 11.4 Monitoring a Running Sweep
+
+Query Splunk during execution:
+```
+index=dfw_pipeline component="NSXHygieneOrchestrator" correlationId="HYG-*" | table _time, task, status, message
+```
+
+For real-time task progress:
+```
+index=dfw_pipeline component="NSXHygieneOrchestrator" correlationId="HYG-2026-0414-001" | table _time, task, step, status, duration
+```
+
+---
+
+## 12. Interpreting Hygiene Reports
+
+After a hygiene sweep completes, the report is available in the vRO execution output, Splunk, and (if a callback URL was provided) in the ServiceNow RITM work notes.
+
+### 12.1 Report Fields
+
+| Field | Description |
+|-------|-------------|
+| `correlationId` | Unique identifier for this sweep execution (format: `HYG-{date}-{seq}`) |
+| `site` | Target site code (NDCNG or TULNG) |
+| `scope` | Sweep scope (FULL or QUICK) |
+| `dryRun` | Whether the sweep was a dry run (true = no mutations were made) |
+| `startTime` / `endTime` | Sweep execution window timestamps |
+| `durationMs` | Total sweep duration in milliseconds |
+| `tasks` | Per-task results (see below) |
+| `manualReviewItems` | Items requiring operator intervention |
+| `incidents` | ServiceNow incident numbers created for manual review items |
+| `overallStatus` | One of: `completed`, `completed-with-warnings`, `partial-failure`, `failed` |
+
+### 12.2 Per-Task Result Fields
+
+**orphanGroups:**
+| Field | Meaning |
+|-------|---------|
+| `scanned` | Total security groups evaluated |
+| `orphaned` | Groups with zero members and no referencing rules |
+| `deleted` | Groups deleted (0 if dry run or QUICK scope) |
+| `archived` | Group definitions archived before deletion |
+| `blocked` | Groups with zero members but referenced by active rules (cannot be deleted) |
+
+**staleRules:**
+| Field | Meaning |
+|-------|---------|
+| `scanned` | Total DFW rules evaluated |
+| `stale` | Rules classified as stale (monitor-expired, disabled-expired, or empty-group) |
+| `disabled` | Rules disabled (0 if dry run or QUICK scope) |
+| `archived` | Rule definitions archived before disabling |
+
+**staleTags:**
+| Field | Meaning |
+|-------|---------|
+| `scanned` | Total VMs scanned for tag drift |
+| `drifted` | VMs whose NSX tags do not match CMDB expected state |
+| `remediated` | VMs whose tags were corrected (0 if dry run or QUICK scope) |
+| `quarantined` | VMs flagged for manual review due to incomplete CMDB records |
+
+**phantomVMs:**
+| Field | Meaning |
+|-------|---------|
+| `nsxVMCount` | Total VMs in NSX fabric inventory |
+| `vcenterVMCount` | Total VMs in vCenter inventory |
+| `phantomCount` | VMs in NSX but not in vCenter |
+| `cleaned` | Phantom VMs cleaned up (0 if dry run or QUICK scope) |
+
+**unregisteredVMs:**
+| Field | Meaning |
+|-------|---------|
+| `discovered` | VMs in vCenter/NSX without CMDB records |
+| `onboarded` | VMs successfully onboarded with CMDB records and initial tags |
+| `failed` | VMs that could not be onboarded (insufficient metadata) |
+
+**emptySections:**
+| Field | Meaning |
+|-------|---------|
+| `cleaned` | Empty DFW policy sections removed |
+
+### 12.3 Overall Status Interpretation
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `completed` | All tasks succeeded with no manual review items | No action required |
+| `completed-with-warnings` | All tasks succeeded but some items require manual review | Review the `manualReviewItems` array and address each item |
+| `partial-failure` | One or more tasks failed but others completed | Check `tasks` for failed entries; investigate and re-run if needed |
+| `failed` | All tasks failed or orchestration-level error | Investigate root cause (NSX connectivity, ServiceNow availability); escalate per Section 9 |
+
+---
+
+## 13. Handling Manual-Review Items
+
+Some hygiene findings cannot be auto-remediated and require operator intervention. These are surfaced in the `manualReviewItems` array of the hygiene report and as ServiceNow incidents.
+
+### 13.1 Quarantined VMs (type: `quarantined-vm`)
+
+**Cause:** The VM's NSX tags do not match the CMDB expected state, and the CMDB record is incomplete or contains conflicting values (e.g., PCI compliance in a Sandbox environment), preventing automatic remediation.
+
+**Resolution steps:**
+1. Open the ServiceNow incident referenced in the hygiene report.
+2. Navigate to the CMDB CI record for the VM (`cmdb_ci_vm_instance`).
+3. Verify and correct the tag assignment fields (Application, Tier, Environment, DataClassification, Compliance, CostCenter).
+4. Once the CMDB record is complete and conflict-free, re-run the hygiene sweep with `scope=FULL` or manually trigger tag remediation via **Workflows > DFW Pipeline > Operations > Remediate Tags** for the specific VM.
+5. Close the ServiceNow incident with resolution notes.
+
+### 13.2 Unregistered VMs (type: `onboarding-failed`)
+
+**Cause:** The VM exists in vCenter and NSX but has no CMDB record, and the available vCenter metadata (cluster name, network segment, folder path) is insufficient to infer mandatory tag values.
+
+**Resolution steps:**
+1. Open the ServiceNow incident referenced in the hygiene report.
+2. Identify the VM in vCenter and determine the correct tag assignments by consulting the application owner or infrastructure team.
+3. Manually create a CMDB CI record for the VM with the correct tag assignments.
+4. Apply tags using **Workflows > DFW Pipeline > Batch > Execute Batch Onboarding** with a single-row CSV for this VM.
+5. Close the ServiceNow incident with resolution notes.
+
+### 13.3 Blocked Groups (type: `blocked-group`)
+
+**Cause:** The security group has zero member VMs but IS referenced by one or more active DFW rules. Deleting the group would invalidate those rules.
+
+**Resolution steps:**
+1. Open the ServiceNow incident referenced in the hygiene report.
+2. Identify the referencing DFW rules from the incident details (the rule IDs and policy IDs are included).
+3. Determine whether the referencing rules are still needed:
+   - If the rules are obsolete, disable or delete them via **Workflows > DFW Pipeline > Policy Management** or through the RuleLifecycleManager.
+   - If the rules are still needed, determine why the group has no members. The group may need VMs re-tagged to restore membership.
+4. After resolving the rule references, the next hygiene sweep will clean up the group automatically.
+5. Close the ServiceNow incident with resolution notes.
+
+---
+
+## 14. Emergency: Restoring a Deleted Group from Archive
+
+If a security group was deleted by the OrphanGroupCleaner and the deletion was incorrect (e.g., VMs were in the process of being tagged when the sweep ran), the group definition can be restored from the archived JSON snapshot.
+
+### 14.1 Locate the Archive
+
+Group archives are stored in the vRO server's local filesystem:
+```
+archives/groups/{site}/{groupId}_{timestamp}.json
+```
+
+Example: `archives/groups/NDCNG/SG-APP001_Web_Production_20260414T020000Z.json`
+
+To list available archives, navigate to **Workflows > DFW Pipeline > Hygiene > List Group Archives** and provide the site code.
+
+Alternatively, query Splunk for the deletion event to identify the archive path:
+```
+index=dfw_pipeline component="OrphanGroupCleaner" action="archive" groupId="SG-APP001_Web_Production" | table archivePath, _time
+```
+
+### 14.2 Restore the Group
+
+1. Navigate to **Workflows > DFW Pipeline > Hygiene > Restore Archived Group**.
+2. Provide the archive file path (from Section 14.1).
+3. The workflow will:
+   a. Parse the archived JSON definition.
+   b. Re-create the security group in NSX Manager via `PUT /policy/api/v1/infra/domains/default/groups/{groupId}` with the original expression criteria and metadata.
+   c. Verify that the group was created successfully.
+   d. Log the restoration event for audit trail.
+4. After restoration, verify that VMs with matching tags are re-populating the group by checking group membership:
+   ```
+   GET {nsxUrl}/policy/api/v1/infra/domains/default/groups/{groupId}/members/virtual-machines
+   ```
+
+**Caution:** Restoring a group does not restore any DFW rules that referenced the group. If rules were also disabled or deleted during the same sweep, those must be restored separately from the rule archive (`archives/rules/{site}/`).
+
+### 14.3 Post-Restoration Verification
+
+After restoring a group:
+1. Run a drift detection scan to confirm tag and group alignment:
+   ```
+   index=dfw_pipeline component="DriftDetector" site="NDCNG" groupId="SG-APP001_Web_Production" | table driftCategory, driftCount, _time
+   ```
+2. Verify DFW policy coverage for VMs that should be members of the restored group:
+   - Navigate to **Workflows > DFW Pipeline > Operations > Validate DFW Coverage**.
+   - Provide the VM ID and site.
+3. Update the ServiceNow incident (if one was created) with the restoration details and verification outcome.
 
 ---
 

@@ -9,7 +9,13 @@ This guide provides step-by-step instructions for deploying the NSX DFW Automati
 1. [Prerequisites Checklist](#1-prerequisites-checklist)
 2. [Where to Deploy Each Component](#2-where-to-deploy-each-component)
 3. [Test Data Setup for Demos](#3-test-data-setup-for-demos)
-4. [Troubleshooting Common Setup Issues](#4-troubleshooting-common-setup-issues)
+4. [Monitor-Mode Deployment](#4-monitor-mode-deployment)
+5. [Drift Trend Analysis](#5-drift-trend-analysis)
+6. [Running Tests](#6-running-tests)
+7. [Troubleshooting Common Setup Issues](#7-troubleshooting-common-setup-issues)
+13. [Hygiene Module Configuration](#13-hygiene-module-configuration)
+14. [ServiceNow Scheduled Job Setup for Hygiene Sweep](#14-servicenow-scheduled-job-setup-for-hygiene-sweep)
+15. [Test Data Setup for Hygiene Testing](#15-test-data-setup-for-hygiene-testing)
 
 ---
 
@@ -1175,7 +1181,164 @@ This demo verifies the full drift detection lifecycle from scan initiation throu
 
 ---
 
-## 4. Troubleshooting Common Setup Issues
+## 4. Monitor-Mode Deployment
+
+Monitor mode allows new DFW policies to be deployed in an observation-only state before full enforcement. This reduces risk by enabling operators to review traffic patterns and identify false positives before blocking legitimate traffic.
+
+### 4.1 Deploying Policies in Monitor Mode
+
+To deploy a policy in monitor mode, set the `deploymentMode` property to `MONITOR` in the policy definition or pass it as a parameter to the PolicyDeployer:
+
+```javascript
+const deployer = new PolicyDeployer(nsxClient, logger, configLoader);
+
+// Deploy in monitor mode (ALLOW action with logging enabled)
+const result = await deployer.deployMonitorMode(policyDefinition, site);
+// result: { deployed: true, policyId: 'policy-123', mode: 'MONITOR', ruleCount: 5 }
+```
+
+In monitor mode, all rules are deployed with `action: ALLOW` and `logged: true` regardless of the intended enforcement action. This allows all traffic to pass while generating log entries for every matched connection. The original intended actions (ALLOW, DROP, REJECT) are preserved in rule tags so they can be restored during promotion.
+
+### 4.2 Reviewing Traffic Logs
+
+After deploying in monitor mode, review the traffic logs in your SIEM (Splunk/ELK) to validate policy correctness:
+
+1. **Filter logs** by the policy ID and log label assigned during monitor-mode deployment.
+2. **Identify false positives** -- legitimate traffic that would be blocked under enforcement mode. Look for log entries where the intended action is DROP but the traffic source/destination is a known-good communication path.
+3. **Identify missing rules** -- expected traffic flows that do not appear in the logs, indicating that the policy scope may not cover all required workloads.
+4. **Review for a minimum observation period** (recommended: 48-72 hours, configurable via `monitorModeDurationHours` in the pipeline configuration) to capture business-cycle traffic variations.
+
+### 4.3 Promoting to Enforcement
+
+Once the observation period confirms that the policy is correct, promote it to enforcement mode:
+
+```javascript
+// Promote from MONITOR to ENFORCE -- restores original rule actions
+const promoteResult = await deployer.promoteToEnforce(policyId, site);
+// promoteResult: { promoted: true, policyId: 'policy-123', mode: 'ENFORCE', ruleCount: 5 }
+```
+
+Promotion restores each rule's original action (DROP, REJECT, ALLOW) and retains logging. The transition is atomic at the policy level -- all rules within the policy are promoted together to prevent partial enforcement states.
+
+### 4.4 Checking Current Deployment Mode
+
+Query the current deployment mode of any policy:
+
+```javascript
+const mode = await deployer.getDeploymentMode(policyId, site);
+// mode: 'MONITOR' | 'ENFORCE' | 'DISABLED'
+```
+
+---
+
+## 5. Drift Trend Analysis
+
+Drift trend analysis extends the standard drift detection workflow by storing historical scan results and computing trends over configurable lookback windows. This enables operators to identify systemic drift patterns, recurring offenders, and environmental factors contributing to tag inconsistency.
+
+### 5.1 Configuration
+
+Drift trend tracking is configured in the pipeline configuration under the `driftTrend` section:
+
+```javascript
+{
+  driftTrend: {
+    enabled: true,                    // Enable/disable trend tracking
+    lookbackDays: 30,                 // Number of days of scan history to retain
+    scanRetentionCount: 100,          // Maximum number of scan records per VM
+    trendThreshold: 3,                // Number of drift occurrences to flag as trending
+    storageMode: 'local+servicenow'   // Store history locally and sync to ServiceNow
+  }
+}
+```
+
+### 5.2 How It Works
+
+1. **Scan History Storage**: After each drift detection scan, the `DriftDetectionWorkflow.storeScanHistory()` method persists the scan results (VM ID, drift categories, severity, timestamp) to local storage and optionally to a ServiceNow custom table.
+2. **Trend Analysis**: The `DriftDetectionWorkflow.analyzeDriftTrend()` method queries stored scan history within the configured lookback window and computes per-VM and per-category drift frequency.
+3. **Summary Generation**: The `DriftDetectionWorkflow.generateDriftSummary()` method produces a structured report identifying:
+   - VMs with recurring drift (exceeding the trend threshold)
+   - Most frequently drifted tag categories
+   - Time-of-day and day-of-week drift patterns
+   - Correlation between drift events and infrastructure changes (e.g., vMotion, maintenance windows)
+
+### 5.3 Lookback Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `lookbackDays` | 30 | How far back to analyze scan history |
+| `scanRetentionCount` | 100 | Maximum stored scans per VM before oldest are pruned |
+| `trendThreshold` | 3 | Minimum drift occurrences within the lookback window to classify as a trend |
+
+Operators can adjust these settings per site or globally. Shorter lookback windows (7 days) are useful for detecting acute issues, while longer windows (90 days) reveal chronic patterns.
+
+---
+
+## 6. Running Tests
+
+### 6.1 Quick Reference
+
+```bash
+# Run the full test suite with coverage
+npm test
+
+# Run with detailed coverage report
+npx jest --coverage
+
+# Run only unit tests
+npm run test:unit
+
+# Run only integration tests
+npm run test:integration
+
+# Run a specific test directory
+npx jest tests/unit/dfw/
+npx jest tests/unit/lifecycle/
+npx jest tests/unit/shared/
+npx jest tests/unit/tags/
+npx jest tests/unit/servicenow/
+
+# Run a single test file
+npx jest tests/unit/dfw/PolicyDeployer.test.js
+
+# Run tests matching a name pattern
+npx jest --testNamePattern="monitor mode"
+
+# Watch mode for development
+npx jest --watch
+
+# Generate coverage summary only
+npx jest --coverage --coverageReporters=text-summary
+```
+
+### 6.2 Coverage Targets
+
+The project targets **95%+** line, branch, function, and statement coverage across all modules. Coverage is enforced in CI -- builds fail if coverage drops below the configured thresholds.
+
+| Metric | Target |
+|--------|--------|
+| Line Coverage | 95%+ |
+| Branch Coverage | 95%+ |
+| Function Coverage | 95%+ |
+| Statement Coverage | 95%+ |
+
+### 6.3 Test Organization
+
+| Directory | Contents | Count |
+|-----------|----------|-------|
+| `tests/unit/shared/` | Shared utilities (CircuitBreaker, RetryHandler, Logger, etc.) | ~10 suites |
+| `tests/unit/tags/` | Tag operations and cardinality enforcement | ~3 suites |
+| `tests/unit/groups/` | Group membership and reconciliation | ~2 suites |
+| `tests/unit/dfw/` | DFW policy validation, conflict detection, deployment | ~5 suites |
+| `tests/unit/lifecycle/` | Orchestrators, saga, drift detection, migration | ~12 suites |
+| `tests/unit/servicenow/` | ServiceNow client scripts and integrations | ~12 suites |
+| `tests/unit/adapters/` | API adapter tests | ~3 suites |
+| `tests/unit/cmdb/` | CMDB validation | ~1 suite |
+| `tests/integration/` | End-to-end pipeline integration | 1 suite |
+| **Total** | | **54 suites, 1161+ tests** |
+
+---
+
+## 7. Troubleshooting Common Setup Issues
 
 | Symptom | Likely Cause | Resolution |
 |---------|-------------|------------|
@@ -1192,6 +1355,712 @@ This demo verifies the full drift detection lifecycle from scan initiation throu
 | Drift detection not running | Scheduled workflow not configured or disabled in vRO | Verify the drift detection workflow is scheduled in vRO > Workflow Scheduler. The default schedule is daily at 02:00. Check that the workflow is not paused or errored. |
 | Saga rollback fails with partial state | Compensating action encountered an API error during rollback | Check the Dead Letter Queue for failed compensation events. Manually remediate the partial state using the details in the DLQ entry. The SagaCoordinator logs each step with the correlation ID for traceability. |
 | REST callback payload rejected by ServiceNow | Payload schema mismatch or missing required fields | Validate the callback payload against `schemas/vro-snow-callback.schema.json`. Ensure the `correlationId` and `status` fields are present. Check the Scripted REST API logs in ServiceNow. |
+
+---
+
+## 8. CMDB Access Prerequisites
+
+### 5.1 CMDB Service Account
+
+The CMDBValidator module requires read access to the ServiceNow CMDB to extract VM inventory and validate tag completeness. Configure the following:
+
+| Requirement | Details |
+|-------------|---------|
+| Service Account | `svc-vro-cmdb` (or extend `svc-vro-snow` permissions) |
+| Required Roles | `cmdb_read`, `itil` |
+| Tables Accessed | `cmdb_ci_vm_instance`, `cmdb_ci_appl`, `cmdb_rel_ci` |
+| API Permissions | REST API read access to CMDB tables and task creation |
+
+### 5.2 CMDB Table Access Verification
+
+Verify access by running the following from the vRO appliance or any REST client:
+
+```bash
+curl -u svc-vro-cmdb:password \
+  "https://instance.service-now.com/api/now/table/cmdb_ci_vm_instance?sysparm_limit=1" \
+  -H "Accept: application/json"
+```
+
+A successful response returns HTTP 200 with a JSON body containing a `result` array.
+
+---
+
+## 9. VRA Package Import Instructions
+
+### 6.1 Package Import via Orchestrator UI
+
+1. Open the Aria Automation Orchestrator client.
+2. Navigate to **Administration > Packages > Import Package**.
+3. Browse to `package/com.dfw.automation/` and select the package archive.
+4. Review the import manifest -- verify all actions, workflows, and configuration elements are listed.
+5. Click **Import** and wait for completion.
+6. Verify import by navigating to **Library > Actions** and confirming the `com.enterprise.dfw.*` modules are present.
+
+### 6.2 Package Import via CLI
+
+```bash
+cd package/
+./scripts/import-package.sh --host https://vro-host.company.internal:443 \
+  --user svc-vro-admin --password '{{vault:secret/vro/admin/password}}'
+```
+
+The import script processes actions in dependency order, creates workflows, and configures configuration elements.
+
+### 6.3 Post-Import Configuration
+
+After importing the package, update the `DFW-Pipeline-Config` configuration element with environment-specific values:
+
+| Attribute | Value |
+|-----------|-------|
+| `cmdbUrl` | `https://instance.service-now.com` |
+| `ruleRegistryTable` | `x_dfw_rule_registry` |
+| `reviewNotificationWindowDays` | `30` |
+| `reviewGracePeriodDays` | `14` |
+| `migrationBatchSize` | `50` |
+
+---
+
+## 10. New vRO Workflow Creation Instructions
+
+### 7.1 Workflow: DFW-CMDBValidation
+
+- **Purpose:** Runs CMDB validation against a specified site, generating gap reports and remediation tasks
+- **Input Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `site` | `string` | Target site code (NDCNG or TULNG) |
+| `generateTasks` | `boolean` | Whether to create remediation tasks in ServiceNow (default: true) |
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-CMDBValidation -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var CMDBValidator = System.getModule("com.enterprise.dfw.cmdb").CMDBValidator;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-CMDBValidation");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    logger.info("Starting CMDB validation", { correlationId: correlationId, site: site });
+    var validator = new CMDBValidator(config);
+    var report = validator.generateGapReport(site);
+    if (generateTasks) {
+        validator.generateRemediationTasks(report);
+    }
+    logger.info("CMDB validation completed", { correlationId: correlationId, coverage: report.coveragePercentage });
+} catch (e) {
+    logger.error("CMDB validation failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+- **Schedule:** Configure as a scheduled workflow running daily at 02:00.
+
+### 7.2 Workflow: DFW-RuleLifecycle
+
+- **Purpose:** Manages DFW rule lifecycle state transitions
+- **Input Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `ruleId` | `string` | Rule identifier (DFW-R-XXXX format) |
+| `action` | `string` | Lifecycle action (analyzeImpact, approve, deployMonitor, validate, enforce, certify, rollback) |
+| `actor` | `string` | User performing the action |
+| `justification` | `string` | Reason for the state transition |
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-RuleLifecycle -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var RuleLifecycleManager = System.getModule("com.enterprise.dfw.lifecycle").RuleLifecycleManager;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-RuleLifecycle");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    logger.info("Processing rule lifecycle action", { correlationId: correlationId, ruleId: ruleId, action: action });
+    var manager = new RuleLifecycleManager(config);
+    var result;
+    switch (action) {
+        case "analyzeImpact": result = manager.analyzeImpact(ruleId); break;
+        case "approve": result = manager.transitionState(ruleId, "APPROVED", actor, justification); break;
+        case "deployMonitor": result = manager.deployMonitor(ruleId, config.site); break;
+        case "validate": result = manager.transitionState(ruleId, "VALIDATED", actor, justification); break;
+        case "enforce": result = manager.enforceRule(ruleId, config.site); break;
+        case "certify": result = manager.transitionState(ruleId, "CERTIFIED", actor, justification); break;
+        case "rollback": result = manager.rollbackRule(ruleId, justification, actor); break;
+        default: throw new Error("Unknown action: " + action);
+    }
+    logger.info("Rule lifecycle action completed", { correlationId: correlationId, result: result });
+} catch (e) {
+    logger.error("Rule lifecycle action failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+### 7.3 Workflow: DFW-RuleReview
+
+- **Purpose:** Scheduled workflow that scans for rules due for review, sends notifications, and auto-expires overdue rules
+- **Input Parameters:** None (configuration is read from the configuration element)
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-RuleReview -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var RuleReviewScheduler = System.getModule("com.enterprise.dfw.lifecycle").RuleReviewScheduler;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-RuleReview");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    logger.info("Starting rule review scan", { correlationId: correlationId });
+    var scheduler = new RuleReviewScheduler(config);
+    var dueRules = scheduler.scanForReviewDue();
+    if (dueRules.length > 0) {
+        scheduler.notifyOwners(dueRules);
+    }
+    var overdueRules = scheduler.escalateOverdue(dueRules);
+    var expiredRules = scheduler.autoExpire(overdueRules);
+    logger.info("Rule review scan completed", {
+        correlationId: correlationId,
+        dueCount: dueRules.length,
+        escalatedCount: overdueRules.length,
+        expiredCount: expiredRules.length
+    });
+} catch (e) {
+    logger.error("Rule review scan failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+- **Schedule:** Configure as a scheduled workflow running daily at 06:00.
+
+### 7.4 Workflow: DFW-MigrationBulkTag
+
+- **Purpose:** Processes migration wave manifests for bulk tag application during Greenzone VM migrations
+- **Input Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `manifestJson` | `string` | JSON string containing the migration manifest |
+| `waveId` | `string` | Specific wave to process (or "all" for full manifest) |
+| `dryRun` | `boolean` | If true, validate only without applying tags |
+
+- **Scriptable Task Code:**
+
+```javascript
+// DFW-MigrationBulkTag -- Scriptable Task
+var Logger = System.getModule("com.enterprise.dfw.shared").Logger;
+var ConfigLoader = System.getModule("com.enterprise.dfw.shared").ConfigLoader;
+var MigrationBulkTagger = System.getModule("com.enterprise.dfw.lifecycle").MigrationBulkTagger;
+var CorrelationContext = System.getModule("com.enterprise.dfw.shared").CorrelationContext;
+
+var logger = new Logger("DFW-MigrationBulkTag");
+var config = new ConfigLoader().load();
+var correlationId = CorrelationContext.generate();
+
+try {
+    var manifest = JSON.parse(manifestJson);
+    logger.info("Starting migration bulk tag", { correlationId: correlationId, waveId: waveId, dryRun: dryRun });
+    var tagger = new MigrationBulkTagger(config);
+    tagger.loadManifest(manifest);
+    var validationResult = tagger.preValidate(waveId);
+    if (!dryRun && validationResult.valid) {
+        var waveResult = tagger.executeWave(waveId);
+        var verifyResult = tagger.verifyPostMigration(waveId);
+        var report = tagger.generateWaveReport(waveId);
+        logger.info("Migration bulk tag completed", { correlationId: correlationId, result: report.summary });
+    } else {
+        logger.info("Migration bulk tag dry run completed", { correlationId: correlationId, validation: validationResult });
+    }
+} catch (e) {
+    logger.error("Migration bulk tag failed", { correlationId: correlationId, error: e.message });
+    throw e;
+}
+```
+
+---
+
+## 11. ServiceNow Deployment for New Components
+
+### 8.1 x_dfw_rule_registry Table
+
+1. Navigate to: **System Definition > Tables > New**
+2. Set:
+   - Label: `DFW Rule Registry`
+   - Name: `x_dfw_rule_registry`
+   - Add to Module: `DFW Automation`
+3. Add columns as specified in the LLD Section 8.3 (RuleRegistry table schema).
+4. Click **Submit** to create the table.
+5. Add unique index on `u_rule_id`.
+
+### 8.2 cmdbTagSyncRule Business Rule
+
+**File:** `src/servicenow/business-rules/cmdbTagSyncRule.js`
+- Navigate to: **System Definition > Business Rules > New**
+- Configuration:
+  - Name: `CMDB Tag Sync Rule`
+  - Table: `cmdb_ci_vm_instance`
+  - When to run: **after** update
+  - Filter: Add conditions for monitored fields (environment, application, tier)
+  - Script: Paste the file contents from `src/servicenow/business-rules/cmdbTagSyncRule.js`
+  - Active: true
+  - Order: 200
+
+### 8.3 DFW Rule Request Catalog Item
+
+1. Navigate to: **Service Catalog > Catalog Definitions > Maintain Items > New**
+2. Configuration:
+   - Name: `DFW Rule Request`
+   - Category: `Security`
+   - Variables:
+
+| Variable | Type | Mandatory | Notes |
+|----------|------|-----------|-------|
+| Rule Name | String | Yes | Human-readable rule name |
+| Description | Multi-line Text | Yes | Detailed rule description |
+| Source Group | Reference | Yes | Table: NSX security groups |
+| Destination Group | Reference | Yes | Table: NSX security groups |
+| Services/Ports | String | Yes | Comma-separated port list |
+| Action | Select Box | Yes | Choices: ALLOW, DROP, REJECT |
+| Site | Select Box | Yes | Choices: NDCNG, TULNG |
+| Justification | Multi-line Text | Yes | Business justification |
+
+3. Attach client script: `ruleRequest_onLoad.js`
+4. Workflow: Security Architect approval required
+
+### 8.4 Scheduled Jobs
+
+Create the following scheduled jobs in ServiceNow or vRO:
+
+| Job Name | Schedule | Target Workflow | Description |
+|----------|----------|----------------|-------------|
+| DFW CMDB Validation - NDCNG | Daily 02:00 | DFW-CMDBValidation | Validate CMDB tag coverage for NDCNG site |
+| DFW CMDB Validation - TULNG | Daily 02:30 | DFW-CMDBValidation | Validate CMDB tag coverage for TULNG site |
+| DFW Rule Review Scan | Daily 06:00 | DFW-RuleReview | Scan for rules due for review and send notifications |
+| DFW Drift Detection - NDCNG | Every 4 hours | DFW-DriftDetection | Scheduled drift scan for NDCNG |
+| DFW Drift Detection - TULNG | Every 4 hours | DFW-DriftDetection | Scheduled drift scan for TULNG |
+
+---
+
+## 12. Test Data Setup for New Modules
+
+### 9.1 Rule Registry Test Data
+
+Populate the `x_dfw_rule_registry` table with the following test records:
+
+```javascript
+// Background script to populate Rule Registry test data
+var rules = [
+    {
+        rule_id: 'DFW-R-0001',
+        rule_name: 'Web Tier HTTP Inbound',
+        description: 'Allow HTTP/HTTPS inbound to web tier from load balancer',
+        current_state: 'ENFORCED',
+        site: 'NDCNG',
+        source_channel: 'Catalog',
+        review_cadence_days: 90,
+        expiry_date: '2026-07-15'
+    },
+    {
+        rule_id: 'DFW-R-0002',
+        rule_name: 'App Tier API Access',
+        description: 'Allow API traffic from web tier to application tier',
+        current_state: 'MONITOR_MODE',
+        site: 'NDCNG',
+        source_channel: 'Onboarding',
+        review_cadence_days: 90,
+        expiry_date: '2026-08-01'
+    },
+    {
+        rule_id: 'DFW-R-0003',
+        rule_name: 'Database Tier Access',
+        description: 'Allow database connections from app tier to database tier',
+        current_state: 'REVIEW_DUE',
+        site: 'NDCNG',
+        source_channel: 'Catalog',
+        review_cadence_days: 60,
+        expiry_date: '2026-04-20'
+    }
+];
+
+rules.forEach(function(rule) {
+    var gr = new GlideRecord('x_dfw_rule_registry');
+    gr.initialize();
+    gr.u_rule_id = rule.rule_id;
+    gr.u_rule_name = rule.rule_name;
+    gr.u_description = rule.description;
+    gr.u_current_state = rule.current_state;
+    gr.u_site = rule.site;
+    gr.u_source_channel = rule.source_channel;
+    gr.u_review_cadence_days = rule.review_cadence_days;
+    gr.u_expiry_date = rule.expiry_date;
+    gr.u_created_date = new GlideDateTime().getDisplayValue();
+    gr.insert();
+});
+gs.info('Rule Registry: Inserted ' + rules.length + ' test records.');
+```
+
+### 9.2 Migration Manifest Test Data
+
+Create a test migration manifest file for the MigrationBulkTagger:
+
+```json
+{
+    "manifestId": "MIG-2026-Q2-TEST-01",
+    "description": "Test migration wave for Greenzone Phase 1",
+    "waves": [
+        {
+            "waveId": "WAVE-TEST-001",
+            "scheduledDate": "2026-04-15",
+            "vms": [
+                {
+                    "vmName": "NDCNG-APP001-WEB-P01",
+                    "cmdbCi": "CI-APP001-WEB-P01",
+                    "tags": {
+                        "Region": "NDCNG",
+                        "SecurityZone": "Internal",
+                        "Environment": "Production",
+                        "AppCI": "APP001",
+                        "SystemRole": "WebServer"
+                    }
+                },
+                {
+                    "vmName": "NDCNG-APP001-APP-P01",
+                    "cmdbCi": "CI-APP001-APP-P01",
+                    "tags": {
+                        "Region": "NDCNG",
+                        "SecurityZone": "Internal",
+                        "Environment": "Production",
+                        "AppCI": "APP001",
+                        "SystemRole": "AppServer"
+                    }
+                }
+            ]
+        }
+    ]
+}
+```
+
+---
+
+## 10. Packaging and Deployment
+
+### 10.1 VRA Package Structure
+
+The `package/` directory at the repository root contains the complete VRA deployment package:
+
+```
+package/
+  com.dfw.automation/
+    actions/          # All vRO actions organized by module
+    workflows/        # Workflow XML definitions
+    config-elements/  # Configuration element templates
+  scripts/
+    import-package.sh   # Automated import script
+    export-package.sh   # Package export for versioning
+  servicenow/
+    tables/            # Table XML update sets
+    business-rules/    # Business rule update sets
+    catalog-items/     # Catalog item configurations
+    client-scripts/    # Client script update sets
+    server-scripts/    # Server script update sets
+    scheduled-jobs/    # Scheduled job configurations
+    ui-policies/       # UI policy update sets
+    scripted-rest-apis/ # REST API definitions
+```
+
+### 10.2 Full Deployment Sequence
+
+1. **Import vRO package**: Use the Orchestrator UI or `scripts/import-package.sh` to import all actions and workflows.
+2. **Configure endpoints**: Update the `DFW-Pipeline-Config` configuration element with environment-specific URLs and credential vault references.
+3. **Import ServiceNow update sets**: Import update sets from `package/servicenow/` in the following order:
+   - Tables (`x_dfw_rule_registry`, `u_enterprise_tag_dictionary`)
+   - Business rules (`cmdbTagSyncRule`, `tagFieldServerValidation`)
+   - Server scripts (`catalogItemValidation`, `tagDictionaryLookup`)
+   - Client scripts (all `*_onLoad.js` and `*_onChange.js`)
+   - Catalog items (VM Build, Tag Update, Decommission, Quarantine, Rule Request, Bulk Tag)
+   - Scheduled jobs (CMDB validation, rule review, drift detection)
+   - UI policies and scripted REST APIs
+4. **Configure NSX tag categories**: Create the 5 mandatory + 3 optional tag categories in each NSX Manager.
+5. **Create security groups**: Create dynamic security groups based on the new tag taxonomy.
+6. **Deploy DFW policies**: Import or create DFW policies from `policies/dfw-rules/` YAML files.
+7. **Verify connectivity**: Test REST API connectivity between all integration endpoints.
+8. **Run validation**: Execute the DFW-CMDBValidation workflow to verify CMDB data quality.
+
+---
+
+## 13. Hygiene Module Configuration
+
+The NSXHygieneOrchestrator is configured via the vRO Configuration Element `DFW-Pipeline-Config`. The following attributes control hygiene sweep behavior.
+
+### 13.1 Configuration Attributes
+
+Add these attributes to the existing `DFW-Pipeline-Config` configuration element (see Section 2.3 for the base configuration):
+
+| Attribute Name | Type | Default | Description |
+|---------------|------|---------|-------------|
+| `hygiene.orphanGroups.minAgeHours` | Number | `72` | Minimum group age (hours since creation) before it is eligible for orphan classification. Prevents deletion of groups that are still being populated by in-flight pipeline operations. |
+| `hygiene.orphanGroups.archiveDir` | String | `archives/groups/` | Directory path for archived group definitions (relative to vRO working directory) |
+| `hygiene.staleRules.maxMonitorDays` | Number | `30` | Maximum days a rule may remain in MONITOR mode without promotion before it is classified as stale |
+| `hygiene.staleRules.maxDisabledDays` | Number | `90` | Maximum days a rule may remain disabled before it is classified as stale |
+| `hygiene.staleRules.emptyGroupDays` | Number | `14` | Days a rule's source/destination groups must be empty before the rule is classified as stale |
+| `hygiene.staleRules.archiveDir` | String | `archives/rules/` | Directory path for archived rule definitions |
+| `hygiene.staleTags.maxVMs` | Number | `500` | Maximum number of VMs scanned per tag remediation invocation |
+| `hygiene.staleTags.scope` | String | `FULL` | Default scan scope: `FULL` (all managed VMs) or `DRIFTED_ONLY` (only VMs flagged in previous scans) |
+| `hygiene.phantomVMs.cleanup` | Boolean | `false` | Whether phantom VM cleanup is enabled by default. When false, phantoms are detected and reported but not cleaned. Set to true only after validating detection accuracy. |
+| `hygiene.unregisteredVMs.maxVMs` | Number | `100` | Maximum number of VMs onboarded per invocation |
+| `hygiene.unregisteredVMs.defaultAssignmentGroup` | String | `DFW-Pipeline-Admins` | ServiceNow assignment group for newly-created CMDB CI records |
+| `hygiene.sweep.quickScanLimit` | Number | `200` | Maximum VMs scanned per task during QUICK scope sweeps |
+| `hygiene.sweep.fullScanLimit` | Number | `2000` | Maximum VMs scanned per task during FULL scope sweeps |
+| `hygiene.sweep.incidentAssignmentGroup` | String | `DFW-Pipeline-Support` | ServiceNow assignment group for hygiene incidents |
+
+### 13.2 Tag-to-Environment Inference Rules
+
+The UnregisteredVMOnboarder uses configurable mapping rules to infer tag values from vCenter metadata. Add these attributes to `DFW-Pipeline-Config`:
+
+| Attribute Name | Type | Default | Description |
+|---------------|------|---------|-------------|
+| `hygiene.onboarding.clusterToEnvironment` | String (JSON) | `{"PROD-":"Production","PRE-PROD-":"Pre-Production","UAT-":"UAT","DEV-":"Development","SANDBOX-":"Sandbox"}` | Maps cluster name prefixes to Environment tag values |
+| `hygiene.onboarding.networkToClassification` | String (JSON) | `{"PCI-":"PCI","HIPAA-":"HIPAA","DMZ-":"Restricted","INTERNAL-":"Internal"}` | Maps network segment prefixes to DataClassification/Compliance tag values |
+| `hygiene.onboarding.defaultCostCenter` | String | `CC-PENDING` | Default CostCenter tag for VMs where cost center cannot be inferred |
+| `hygiene.onboarding.defaultCompliance` | String | `None` | Default Compliance tag for VMs where compliance scope cannot be inferred |
+
+### 13.3 Applying Configuration Changes
+
+1. Open the vRO Orchestrator Client.
+2. Navigate to **Administration > Configuration Elements > DFW Automation > DFW-Pipeline-Config**.
+3. Add or modify the attributes listed above.
+4. Click **Save**. Changes take effect on the next hygiene sweep invocation (no restart required).
+
+**Verification:** After saving, run a QUICK-scope dry-run sweep to confirm the configuration is being read correctly:
+1. Navigate to **Workflows > DFW Pipeline > Hygiene > Run Hygiene Sweep**.
+2. Set `site=NDCNG`, `scope=QUICK`, `dryRun=true`.
+3. Verify that the sweep completes successfully and the report reflects the configured scan limits.
+
+---
+
+## 14. ServiceNow Scheduled Job Setup for Hygiene Sweep
+
+The hygiene sweep is designed to run on a recurring schedule via a ServiceNow scheduled job that triggers the vRO workflow.
+
+### 14.1 Create the Scheduled Job
+
+1. Navigate to **System Definition > Scheduled Jobs > New**.
+2. Configure the job:
+
+| Field | Value |
+|-------|-------|
+| Name | `NSX Hygiene Sweep -- NDCNG (Weekly FULL)` |
+| Run | `Weekly` |
+| Day of Week | `Sunday` |
+| Time | `02:00` (during maintenance window) |
+| Run as | `svc-snow-vro` (service account with vRO trigger permissions) |
+| Active | `true` |
+
+3. In the **Run this Script** field, paste the following:
+
+```javascript
+(function executeHygieneSweep() {
+    var vROTrigger = new global.VroTrigger();
+
+    var payload = {
+        requestType: 'hygiene_sweep',
+        site: 'NDCNG',
+        scope: 'FULL',
+        dryRun: false,
+        correlationId: new global.CorrelationIdGenerator().generate('HYG'),
+        callbackUrl: gs.getProperty('x_enterprise.dfw.callback_url')
+    };
+
+    var workflowId = gs.getProperty('x_enterprise.dfw.hygiene_workflow_id');
+    vROTrigger.execute(workflowId, JSON.stringify(payload));
+
+    gs.info('NSX Hygiene Sweep triggered for NDCNG (FULL scope)');
+})();
+```
+
+4. Click **Submit**.
+5. Repeat for the TULNG site with a staggered schedule (e.g., Sunday 03:00).
+
+### 14.2 Daily QUICK Sweep Schedule
+
+For daily health checks, create a second scheduled job:
+
+| Field | Value |
+|-------|-------|
+| Name | `NSX Hygiene Sweep -- NDCNG (Daily QUICK)` |
+| Run | `Daily` |
+| Time | `06:00` |
+| Active | `true` |
+
+Use the same script as above but with `scope: 'QUICK'` and `dryRun: true`.
+
+### 14.3 Payload Format Reference
+
+The hygiene sweep payload sent from ServiceNow to vRO follows this schema:
+
+```json
+{
+  "requestType": "hygiene_sweep",
+  "site": "NDCNG",
+  "scope": "FULL",
+  "dryRun": false,
+  "correlationId": "HYG-2026-0414-001",
+  "callbackUrl": "https://instance.service-now.com/api/x_enterprise/dfw_callbacks/vro_callback"
+}
+```
+
+| Field | Type | Required | Valid Values | Description |
+|-------|------|----------|--------------|-------------|
+| `requestType` | String | Yes | `hygiene_sweep` | Fixed value identifying this as a hygiene sweep request |
+| `site` | String | Yes | `NDCNG`, `TULNG` | Target site for the sweep |
+| `scope` | String | Yes | `FULL`, `QUICK` | Sweep depth (see Section 11.1 of RUNBOOK.md for details) |
+| `dryRun` | Boolean | Yes | `true`, `false` | Dry run mode (no mutations when true) |
+| `correlationId` | String | Yes | `HYG-{date}-{seq}` | Unique correlation ID for tracing |
+| `callbackUrl` | String | No | Valid HTTPS URL | ServiceNow callback URL for result delivery |
+
+### 14.4 Callback Response Format
+
+The vRO workflow sends the hygiene report back to ServiceNow at the configured callback URL. The callback payload follows the standard `vro-snow-callback.schema.json` format:
+
+```json
+{
+  "correlationId": "HYG-2026-0414-001",
+  "status": "completed-with-warnings",
+  "requestType": "hygiene_sweep",
+  "result": {
+    "site": "NDCNG",
+    "scope": "FULL",
+    "dryRun": false,
+    "tasks": { "...per-task results..." },
+    "manualReviewItems": [ "...items requiring attention..." ],
+    "incidents": ["INC0012345"],
+    "overallStatus": "completed-with-warnings"
+  },
+  "timestamp": "2026-04-14T02:12:34.000Z"
+}
+```
+
+---
+
+## 15. Test Data Setup for Hygiene Testing
+
+This section describes how to set up test data for validating hygiene module functionality in a lab or development environment.
+
+### 15.1 Mock Orphan Groups
+
+Create security groups in NSX Manager that have no member VMs and are not referenced by any DFW rules. These will be detected by the OrphanGroupCleaner.
+
+1. In NSX Manager, navigate to **Inventory > Groups > Add Group**.
+2. Create the following test groups:
+
+| Group Name | Membership Criteria | Purpose |
+|------------|---------------------|---------|
+| `SG-TEST-ORPHAN-001` | `Tag equals Application:ORPHANTEST001` | Orphan group with no matching VMs |
+| `SG-TEST-ORPHAN-002` | `Tag equals Application:ORPHANTEST002` | Orphan group with no matching VMs |
+| `SG-TEST-BLOCKED-001` | `Tag equals Application:BLOCKEDTEST001` | Orphan group that will be referenced by a test rule (blocked from deletion) |
+
+3. Create a DFW rule referencing `SG-TEST-BLOCKED-001` to test the "blocked" classification:
+   - Navigate to **Security > Distributed Firewall > Add Policy**.
+   - Policy name: `TEST-HYGIENE-BLOCKED`
+   - Add a rule with source = `SG-TEST-BLOCKED-001`, action = `ALLOW`.
+
+**Expected results after sweep:**
+- `SG-TEST-ORPHAN-001` and `SG-TEST-ORPHAN-002` should be deleted (in FULL scope) or reported as orphaned (in QUICK scope).
+- `SG-TEST-BLOCKED-001` should be reported as blocked with the referencing rule identified.
+
+### 15.2 Mock Stale Rules
+
+Create DFW rules that meet staleness criteria for the StaleRuleReaper.
+
+1. In NSX Manager, navigate to **Security > Distributed Firewall > Add Policy**.
+2. Policy name: `TEST-HYGIENE-STALE-RULES`
+3. Add the following rules:
+
+| Rule Name | Source | Destination | Action | Disabled | Purpose |
+|-----------|--------|-------------|--------|----------|---------|
+| `TEST-STALE-DISABLED` | `SG-TEST-ORPHAN-001` | Any | ALLOW | Yes | Disabled rule (stale after `maxDisabledDays`) |
+| `TEST-STALE-MONITOR` | `SG-TEST-ORPHAN-002` | Any | ALLOW (logged=true, tag: `intended_action=DROP`) | No | Monitor-mode rule (stale after `maxMonitorDays`) |
+
+**Note:** To simulate staleness, set `hygiene.staleRules.maxDisabledDays=0` and `hygiene.staleRules.maxMonitorDays=0` in the test configuration. Reset to production values after testing.
+
+### 15.3 Mock Drifted VMs for Tag Remediation
+
+Create VMs with intentionally mismatched tags to test the StaleTagRemediator.
+
+1. Identify a test VM in vCenter (e.g., `TEST-HYGIENE-VM-001`).
+2. In ServiceNow CMDB, set the expected tags:
+   ```
+   Application=APP001, Tier=Web, Environment=Production, DataClassification=Internal, Compliance=PCI, CostCenter=CC-1234
+   ```
+3. In NSX Manager, apply different tags to the same VM:
+   ```
+   Application=APP001, Tier=App, Environment=Staging, DataClassification=Internal, Compliance=None, CostCenter=CC-1234
+   ```
+4. The StaleTagRemediator should detect drift on `Tier`, `Environment`, and `Compliance` categories and remediate them to match the CMDB expected state.
+
+### 15.4 Mock Phantom VMs
+
+Phantom VMs are VMs present in NSX but absent from vCenter. Simulating this in a test environment requires care:
+
+**Option A -- Use the NSX fabric mock API (recommended for unit/integration tests):**
+In the test configuration, enable the mock NSX fabric inventory that includes VM IDs not present in the vCenter mock inventory. See `tests/helpers/mockNsxFabric.js` for the mock setup.
+
+**Option B -- Manual simulation in a lab:**
+1. Provision a test VM in vCenter and allow NSX to register it.
+2. Apply tags to the VM via the pipeline.
+3. Delete the VM directly from vCenter (bypass the pipeline's DayN decommission).
+4. The VM's NSX record will persist as a phantom.
+
+**Expected results:** The PhantomVMDetector should identify the VM as a phantom and (in FULL scope with cleanup enabled) remove its tags.
+
+### 15.5 Mock Unregistered VMs
+
+Create VMs that exist in vCenter and NSX but have no CMDB record.
+
+1. Provision a test VM directly in vCenter (not through the pipeline or ServiceNow).
+2. Do NOT create a CMDB CI record for the VM.
+3. Apply NO tags to the VM in NSX.
+
+**Expected results:** The UnregisteredVMOnboarder should discover the VM, create a CMDB CI record, and apply initial tags based on the vCenter metadata (cluster, network, folder).
+
+### 15.6 Running Hygiene Tests
+
+Execute the full hygiene test suite:
+
+```bash
+# Run all hygiene module tests
+npm test -- --testPathPattern="tests/.*hygiene|tests/.*orphan|tests/.*stale|tests/.*phantom|tests/.*unregistered"
+
+# Run individual module tests
+npm test -- --testPathPattern="tests/.*OrphanGroupCleaner"
+npm test -- --testPathPattern="tests/.*StaleRuleReaper"
+npm test -- --testPathPattern="tests/.*StaleTagRemediator"
+npm test -- --testPathPattern="tests/.*PhantomVMDetector"
+npm test -- --testPathPattern="tests/.*UnregisteredVMOnboarder"
+npm test -- --testPathPattern="tests/.*NSXHygieneOrchestrator"
+```
+
+**Integration test with mock data:**
+
+```bash
+# Set up mock data, run hygiene sweep, verify results
+npm test -- --testPathPattern="tests/integration/hygieneSweep"
+```
 
 ---
 

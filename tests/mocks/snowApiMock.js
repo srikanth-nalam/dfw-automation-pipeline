@@ -20,9 +20,11 @@ const defaultRitmFields = {
   opened_at: '2026-03-20 10:00:00',
   opened_by: { value: 'user-requester', display_value: 'John Doe' },
   u_vm_name: 'NDCNG-APP001-WEB-P01',
-  u_application_id: 'APP001',
-  u_tier: 'Web',
+  u_region: 'NDCNG',
+  u_security_zone: 'Greenzone',
   u_environment: 'Production',
+  u_app_ci: 'APP001',
+  u_system_role: 'Web',
   u_compliance: 'PCI',
   u_data_classification: 'Confidential',
   u_cost_center: 'CC-IT-INFRA-001',
@@ -38,16 +40,16 @@ const defaultRitmFields = {
 const tagDictionaryEntries = [
   {
     sys_id: 'td-001',
-    u_scope: 'Application',
-    u_tag_value: 'APP001',
-    u_description: 'Application identifier for APP001',
+    u_scope: 'Region',
+    u_tag_value: 'NDCNG',
+    u_description: 'North Data Center - Next Gen region',
     u_active: true
   },
   {
     sys_id: 'td-002',
-    u_scope: 'Tier',
-    u_tag_value: 'Web',
-    u_description: 'Web tier',
+    u_scope: 'SecurityZone',
+    u_tag_value: 'Greenzone',
+    u_description: 'Greenzone security zone',
     u_active: true
   },
   {
@@ -59,20 +61,34 @@ const tagDictionaryEntries = [
   },
   {
     sys_id: 'td-004',
+    u_scope: 'AppCI',
+    u_tag_value: 'APP001',
+    u_description: 'Application CI identifier for APP001',
+    u_active: true
+  },
+  {
+    sys_id: 'td-005',
+    u_scope: 'SystemRole',
+    u_tag_value: 'Web',
+    u_description: 'Web system role',
+    u_active: true
+  },
+  {
+    sys_id: 'td-006',
     u_scope: 'Compliance',
     u_tag_value: 'PCI',
     u_description: 'PCI-DSS compliance scope',
     u_active: true
   },
   {
-    sys_id: 'td-005',
+    sys_id: 'td-007',
     u_scope: 'DataClassification',
     u_tag_value: 'Confidential',
     u_description: 'Confidential data classification',
     u_active: true
   },
   {
-    sys_id: 'td-006',
+    sys_id: 'td-008',
     u_scope: 'CostCenter',
     u_tag_value: 'CC-IT-INFRA-001',
     u_description: 'IT Infrastructure cost center',
@@ -149,9 +165,11 @@ const snowApiMock = {
     message: 'DFW tag automation completed successfully',
     timestamp: '2026-03-21T12:00:00.000Z',
     tags_applied: [
-      { scope: 'Application', tag: 'APP001' },
-      { scope: 'Tier', tag: 'Web' },
+      { scope: 'Region', tag: 'NDCNG' },
+      { scope: 'SecurityZone', tag: 'Greenzone' },
       { scope: 'Environment', tag: 'Production' },
+      { scope: 'AppCI', tag: 'APP001' },
+      { scope: 'SystemRole', tag: 'Web' },
       { scope: 'Compliance', tag: 'PCI' },
       { scope: 'DataClassification', tag: 'Confidential' },
       { scope: 'CostCenter', tag: 'CC-IT-INFRA-001' }
@@ -161,7 +179,7 @@ const snowApiMock = {
       'All-Production-VMs',
       'All-PCI-VMs',
       'All-Confidential-Data-VMs',
-      'All-Web-Tier-VMs'
+      'All-Web-SystemRole-VMs'
     ],
     ...details
   }),

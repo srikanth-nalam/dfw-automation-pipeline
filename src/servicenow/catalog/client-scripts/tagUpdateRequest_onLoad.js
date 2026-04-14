@@ -41,7 +41,7 @@ const ROLES = {
  */
 const ADMIN_ONLY_FIELDS = [
     'cost_center',
-    'application'
+    'app_ci'
 ];
 
 /**
@@ -49,10 +49,10 @@ const ADMIN_ONLY_FIELDS = [
  * @constant {string[]}
  */
 const MANAGER_EDITABLE_FIELDS = [
-    'tier',
+    'system_role',
     'environment',
-    'data_classification',
-    'compliance'
+    'region',
+    'security_zone'
 ];
 
 // ---------------------------------------------------------------------------
@@ -141,22 +141,26 @@ function _populateCurrentTags(ciSysId) {
  *
  * @private
  * @param {Object} tags - Tag data keyed by category.
- * @param {string} [tags.application]          - Application tag value.
- * @param {string} [tags.tier]                 - Tier tag value.
+ * @param {string} [tags.region]               - Region tag value.
+ * @param {string} [tags.security_zone]        - SecurityZone tag value.
  * @param {string} [tags.environment]          - Environment tag value.
- * @param {string} [tags.data_classification]  - DataClassification tag value.
+ * @param {string} [tags.app_ci]              - AppCI tag value.
+ * @param {string} [tags.system_role]         - SystemRole tag value.
  * @param {string} [tags.compliance]           - Compliance tag value(s).
+ * @param {string} [tags.data_classification]  - DataClassification tag value.
  * @param {string} [tags.cost_center]          - CostCenter tag value.
  * @returns {void}
  */
 function _setTagFieldValues(tags) {
     /** @type {Array.<{field: string, key: string}>} */
     const fieldMappings = [
-        { field: 'current_application',          key: 'application' },
-        { field: 'current_tier',                 key: 'tier' },
+        { field: 'current_region',               key: 'region' },
+        { field: 'current_security_zone',        key: 'security_zone' },
         { field: 'current_environment',          key: 'environment' },
-        { field: 'current_data_classification',  key: 'data_classification' },
+        { field: 'current_app_ci',              key: 'app_ci' },
+        { field: 'current_system_role',         key: 'system_role' },
         { field: 'current_compliance',           key: 'compliance' },
+        { field: 'current_data_classification',  key: 'data_classification' },
         { field: 'current_cost_center',          key: 'cost_center' }
     ];
 
@@ -173,11 +177,13 @@ function _setTagFieldValues(tags) {
 
     // Also pre-populate the "new" fields with current values as starting point
     const editableFieldMappings = [
-        { field: 'application',          key: 'application' },
-        { field: 'tier',                 key: 'tier' },
+        { field: 'region',               key: 'region' },
+        { field: 'security_zone',        key: 'security_zone' },
         { field: 'environment',          key: 'environment' },
-        { field: 'data_classification',  key: 'data_classification' },
+        { field: 'app_ci',              key: 'app_ci' },
+        { field: 'system_role',         key: 'system_role' },
         { field: 'compliance',           key: 'compliance' },
+        { field: 'data_classification',  key: 'data_classification' },
         { field: 'cost_center',          key: 'cost_center' }
     ];
 

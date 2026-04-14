@@ -53,9 +53,11 @@ describe('DayNOrchestrator', () => {
       },
       tagOperations: {
         getTags: jest.fn().mockResolvedValue({
-          Application: 'APP001',
-          Tier: 'Web',
-          Environment: 'Production'
+          Region: 'NDCNG',
+          SecurityZone: 'Greenzone',
+          Environment: 'Production',
+          AppCI: 'APP001',
+          SystemRole: 'Web'
         }),
         applyTags: jest.fn().mockResolvedValue({ applied: true }),
         removeTags: jest.fn().mockResolvedValue({ removed: true }),
@@ -146,7 +148,7 @@ describe('DayNOrchestrator', () => {
       // Step 5: Tags removed — categories are the Object.keys of the tags
       expect(deps.tagOperations.removeTags).toHaveBeenCalledWith(
         'vm-456',
-        ['Application', 'Tier', 'Environment'],
+        ['Region', 'SecurityZone', 'Environment', 'AppCI', 'SystemRole'],
         'NDCNG'
       );
 
@@ -169,9 +171,11 @@ describe('DayNOrchestrator', () => {
       expect(result.execution).toBeDefined();
       expect(result.execution.vmId).toBe('vm-456');
       expect(result.execution.previousTags).toEqual({
-        Application: 'APP001',
-        Tier: 'Web',
-        Environment: 'Production'
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
+        Environment: 'Production',
+        AppCI: 'APP001',
+        SystemRole: 'Web'
       });
       expect(result.execution.previousGroups).toBeDefined();
       expect(result.execution.previousGroups.groups).toEqual(
@@ -406,12 +410,12 @@ describe('DayNOrchestrator', () => {
   // ---------------------------------------------------------------------------
   describe('_removeTags', () => {
     test('removes all tag categories', async () => {
-      const categories = ['Application', 'Tier', 'Environment'];
+      const categories = ['Region', 'SecurityZone', 'Environment', 'AppCI', 'SystemRole'];
       const result = await orchestrator._removeTags('vm-456', categories, 'NDCNG');
 
       expect(result.vmId).toBe('vm-456');
       expect(result.removedCategories).toEqual(categories);
-      expect(result.categoryCount).toBe(3);
+      expect(result.categoryCount).toBe(5);
       expect(deps.tagOperations.removeTags).toHaveBeenCalledWith(
         'vm-456',
         categories,

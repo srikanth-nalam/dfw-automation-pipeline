@@ -13,14 +13,14 @@ describe('TagCardinalityEnforcer', () => {
   // Single-value enforcement
   // ---------------------------------------------------------------------------
   describe('single-value enforcement', () => {
-    it('replaces existing single-value tag: Application APP001 -> APP002', () => {
-      const current = { Application: 'APP001', Tier: 'Web' };
-      const desired = { Application: 'APP002' };
+    it('replaces existing single-value tag: AppCI APP001 -> APP002', () => {
+      const current = { AppCI: 'APP001', SystemRole: 'Web' };
+      const desired = { AppCI: 'APP002' };
 
       const merged = enforcer.enforceCardinality(current, desired);
 
-      expect(merged.Application).toBe('APP002');
-      expect(merged.Tier).toBe('Web'); // unchanged
+      expect(merged.AppCI).toBe('APP002');
+      expect(merged.SystemRole).toBe('Web'); // unchanged
     });
 
     it('replaces Environment when setting a new value', () => {
@@ -33,18 +33,18 @@ describe('TagCardinalityEnforcer', () => {
 
     it('sets single-value tag on empty current', () => {
       const current = {};
-      const desired = { Application: 'APP001' };
+      const desired = { AppCI: 'APP001' };
 
       const merged = enforcer.enforceCardinality(current, desired);
-      expect(merged.Application).toBe('APP001');
+      expect(merged.AppCI).toBe('APP001');
     });
 
     it('takes first element if array is passed for single-value category', () => {
       const current = {};
-      const desired = { Application: ['APP001', 'APP002'] };
+      const desired = { AppCI: ['APP001', 'APP002'] };
 
       const merged = enforcer.enforceCardinality(current, desired);
-      expect(merged.Application).toBe('APP001');
+      expect(merged.AppCI).toBe('APP001');
     });
   });
 
@@ -122,23 +122,23 @@ describe('TagCardinalityEnforcer', () => {
   // computeDelta
   // ---------------------------------------------------------------------------
   describe('computeDelta', () => {
-    it('returns correct toAdd/toRemove for Application change', () => {
-      const current = { Application: 'APP001', Tier: 'Web' };
-      const desired = { Application: 'APP002' };
+    it('returns correct toAdd/toRemove for AppCI change', () => {
+      const current = { AppCI: 'APP001', SystemRole: 'Web' };
+      const desired = { AppCI: 'APP002' };
 
       const delta = enforcer.computeDelta(current, desired);
 
       expect(delta.toAdd).toEqual(
-        expect.arrayContaining([{ tag: 'APP002', scope: 'Application' }])
+        expect.arrayContaining([{ tag: 'APP002', scope: 'AppCI' }])
       );
       expect(delta.toRemove).toEqual(
-        expect.arrayContaining([{ tag: 'APP001', scope: 'Application' }])
+        expect.arrayContaining([{ tag: 'APP001', scope: 'AppCI' }])
       );
     });
 
     it('returns empty arrays when current matches desired', () => {
-      const current = { Application: 'APP001', Tier: 'Web' };
-      const desired = { Application: 'APP001', Tier: 'Web' };
+      const current = { AppCI: 'APP001', SystemRole: 'Web' };
+      const desired = { AppCI: 'APP001', SystemRole: 'Web' };
 
       const delta = enforcer.computeDelta(current, desired);
       expect(delta.toAdd).toEqual([]);
@@ -235,9 +235,11 @@ describe('TagCardinalityEnforcer', () => {
 
     it('passes for valid PCI + Production combination', () => {
       const tags = {
-        Application: 'APP001',
-        Tier: 'Web',
+        Region: 'NDCNG',
+        SecurityZone: 'Greenzone',
         Environment: 'Production',
+        AppCI: 'APP001',
+        SystemRole: 'Web',
         Compliance: ['PCI'],
         DataClassification: 'Confidential'
       };
@@ -249,7 +251,7 @@ describe('TagCardinalityEnforcer', () => {
 
     it('passes for Sandbox with no compliance', () => {
       const tags = {
-        Application: 'APP001',
+        AppCI: 'APP001',
         Environment: 'Sandbox',
         DataClassification: 'Public'
       };
@@ -270,8 +272,8 @@ describe('TagCardinalityEnforcer', () => {
   // getCategoryType
   // ---------------------------------------------------------------------------
   describe('getCategoryType', () => {
-    it('returns "single" for Application', () => {
-      expect(enforcer.getCategoryType('Application')).toBe('single');
+    it('returns "single" for AppCI', () => {
+      expect(enforcer.getCategoryType('AppCI')).toBe('single');
     });
 
     it('returns "multi" for Compliance', () => {

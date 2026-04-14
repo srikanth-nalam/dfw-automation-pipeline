@@ -484,7 +484,8 @@ class LifecycleOrchestrator {
    *
    * @static
    * @param {string} requestType - The lifecycle request type. One of
-   *   `'Day0'`, `'Day2'`, or `'DayN'`.
+   *   `'Day0'`, `'Day2'`, `'DayN'`, `'Quarantine'`, `'MigrationBulkTag'`,
+   *   or `'RuleLifecycle'`.
    * @param {Object} dependencies - Dependency injection object passed to the
    *   subclass constructor. See {@link LifecycleOrchestrator} constructor for
    *   required properties.
@@ -494,13 +495,17 @@ class LifecycleOrchestrator {
    * @example
    * const orchestrator = LifecycleOrchestrator.create('Day0', dependencies);
    * const result = await orchestrator.run(payload);
+   *
+   * @example
+   * const tagger = LifecycleOrchestrator.create('MigrationBulkTag', dependencies);
+   * const manifest = await tagger.loadManifest(manifestData);
    */
   static create(requestType, dependencies) {
     const normalised = typeof requestType === 'string'
       ? requestType.trim()
       : '';
 
-    /* eslint-disable global-require */
+     
     switch (normalised) {
       case 'Day0': {
         const Day0Orchestrator = require('./Day0Orchestrator');
@@ -518,13 +523,21 @@ class LifecycleOrchestrator {
         const QuarantineOrchestrator = require('./QuarantineOrchestrator');
         return new QuarantineOrchestrator(dependencies);
       }
+      case 'MigrationBulkTag': {
+        const MigrationBulkTagger = require('./MigrationBulkTagger');
+        return new MigrationBulkTagger(dependencies);
+      }
+      case 'RuleLifecycle': {
+        const RuleLifecycleManager = require('../dfw/RuleLifecycleManager');
+        return new RuleLifecycleManager(dependencies);
+      }
       default:
         throw new Error(
           `[DFW-6105] Unknown request type "${requestType}". ` +
-          'Valid types: Day0, Day2, DayN, Quarantine'
+          'Valid types: Day0, Day2, DayN, Quarantine, MigrationBulkTag, RuleLifecycle'
         );
     }
-    /* eslint-enable global-require */
+     
   }
 }
 

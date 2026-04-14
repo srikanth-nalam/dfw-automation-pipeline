@@ -83,9 +83,11 @@ const vcenterApiMock = {
    */
   listAttachedTags: (objectId = 'vm-123') => ({
     value: [
-      { category: 'Application', tag: 'APP001' },
-      { category: 'Tier', tag: 'Web' },
+      { category: 'Region', tag: 'NDCNG' },
+      { category: 'SecurityZone', tag: 'Greenzone' },
       { category: 'Environment', tag: 'Production' },
+      { category: 'AppCI', tag: 'APP001' },
+      { category: 'SystemRole', tag: 'Web' },
       { category: 'Compliance', tag: 'PCI' },
       { category: 'DataClassification', tag: 'Confidential' },
       { category: 'CostCenter', tag: 'CC-IT-INFRA-001' }

@@ -28,7 +28,7 @@ Unit tests validate individual classes and functions in isolation. All external 
 
 **Tool:** Jest 29.x
 **Location:** `tests/unit/`
-**Coverage Targets:** 80% line, 70% branch, 80% function, 80% statement
+**Coverage Targets:** 95%+ line, 95%+ branch, 95%+ function, 95%+ statement
 
 #### Module Coverage
 
@@ -45,6 +45,35 @@ Unit tests validate individual classes and functions in isolation. All external 
 | ConfigLoader | `tests/unit/shared/ConfigLoader.test.js` | Site resolution, invalid site rejection, override precedence, vault references |
 | DFWPolicyValidator | `tests/unit/dfw/DFWPolicyValidator.test.js` | Coverage validation (true/false), orphaned rule detection, API error handling |
 | RuleConflictDetector | `tests/unit/dfw/RuleConflictDetector.test.js` | Shadowed rules, contradictory rules, duplicate rules, unified analysis |
+| PolicyDeployer | `tests/unit/dfw/PolicyDeployer.test.js` | Monitor-mode deploy, promote to enforce, deployment mode query, validation (~18 tests) |
+| RuleLifecycleManager | `tests/unit/dfw/RuleLifecycleManager.test.js` | State machine transitions (REQUESTED through CERTIFIED), audit trail, expiry (~22 tests) |
+| RuleRegistry | `tests/unit/dfw/RuleRegistry.test.js` | DFW-R-XXXX ID generation, lookup, deduplication, registry queries (~15 tests) |
+| RuleReviewScheduler | `tests/unit/dfw/RuleReviewScheduler.test.js` | Scheduled scans, owner notification, escalation, auto-expiry (~20 tests) |
+| GroupMembershipVerifier | `tests/unit/groups/GroupMembershipVerifier.test.js` | Membership verification, dependency checks, predicted group changes (~18 tests) |
+| GroupReconciler | `tests/unit/groups/GroupReconciler.test.js` | Group reconciliation, membership sync, orphan cleanup (~15 tests) |
+| Day0Orchestrator | `tests/unit/lifecycle/Day0Orchestrator.test.js` | Full Day 0 flow, VM provisioning, saga compensation, existing VM checks (~25 tests) |
+| Day2Orchestrator | `tests/unit/lifecycle/Day2Orchestrator.test.js` | Tag delta updates, impact analysis, drift detection, saga rollback (~22 tests) |
+| DayNOrchestrator | `tests/unit/lifecycle/DayNOrchestrator.test.js` | Decommission flow, dependency checks, orphan rule detection, CMDB cleanup (~20 tests) |
+| QuarantineOrchestrator | `tests/unit/lifecycle/QuarantineOrchestrator.test.js` | Emergency quarantine, expiry scheduling, already-quarantined detection (~18 tests) |
+| BulkTagOrchestrator | `tests/unit/lifecycle/BulkTagOrchestrator.test.js` | Bulk operations, concurrency control, dry-run mode, error isolation (~22 tests) |
+| DriftDetectionWorkflow | `tests/unit/lifecycle/DriftDetectionWorkflow.test.js` | Drift scan, auto-remediation, scan history storage, trend analysis, summary generation (~25 tests) |
+| ImpactAnalysisAction | `tests/unit/lifecycle/ImpactAnalysisAction.test.js` | Read-only impact assessment, group change prediction, risk scoring (~15 tests) |
+| LegacyOnboardingOrchestrator | `tests/unit/lifecycle/LegacyOnboardingOrchestrator.test.js` | CSV parsing, validation, batch onboarding, error handling (~20 tests) |
+| MigrationVerifier | `tests/unit/lifecycle/MigrationVerifier.test.js` | Post-vMotion tag check, re-apply missing tags, group re-verification (~18 tests) |
+| MigrationBulkTagger | `tests/unit/lifecycle/MigrationBulkTagger.test.js` | Manifest-based wave processing, bulk tag application (~15 tests) |
+| LifecycleOrchestrator | `tests/unit/lifecycle/LifecycleOrchestrator.test.js` | Template method flow, factory method, error handling, timing instrumentation (~20 tests) |
+| DeadLetterQueue | `tests/unit/lifecycle/DeadLetterQueue.test.js` | Enqueue, dequeue, reprocessing, entry structure validation (~12 tests) |
+| UntaggedVMScanner | `tests/unit/tags/UntaggedVMScanner.test.js` | vCenter inventory scan, untagged VM identification, report generation (~15 tests) |
+| TagPropagationVerifier | `tests/unit/tags/TagPropagationVerifier.test.js` | Propagation polling, timeout handling, realized-state verification (~12 tests) |
+| CMDBValidator | `tests/unit/cmdb/CMDBValidator.test.js` | 5-tag completeness validation, gap reports, remediation task creation (~18 tests) |
+| RateLimiter | `tests/unit/shared/RateLimiter.test.js` | Token bucket behavior, burst handling, refill rate, blocking (~15 tests) |
+| RestClient | `tests/unit/shared/RestClient.test.js` | HTTP methods, error handling, timeout, header propagation (~18 tests) |
+| PayloadValidator | `tests/unit/shared/PayloadValidator.test.js` | Schema validation, required fields, type checking, nested validation (~15 tests) |
+| NsxApiAdapter | `tests/unit/adapters/NsxApiAdapter.test.js` | NSX API abstraction, endpoint construction, response normalization (~15 tests) |
+| VcenterApiAdapter | `tests/unit/adapters/VcenterApiAdapter.test.js` | vCenter API abstraction, VM lookup, tag operations (~12 tests) |
+| SnowPayloadAdapter | `tests/unit/adapters/SnowPayloadAdapter.test.js` | Payload transformation, callback formatting, field mapping (~12 tests) |
+| ServiceNow Client Scripts | `tests/unit/servicenow/*.test.js` (12 files) | Form initialization, field validation, dictionary lookup, callback handling, business rules (~120 tests) |
+| EndToEndPipeline | `tests/integration/EndToEndPipeline.test.js` | Full pipeline integration with mock servers, Day 0/2/N flows (~15 tests) |
 
 ### 1.2 Integration Testing
 
@@ -105,7 +134,7 @@ DR tests validate the cross-site failover capability by simulating NDCNG site un
 
 ## 2. Test Cases
 
-The following table defines all 50 test cases referenced throughout the project documentation. Each test case has a unique ID, description, type, component under test, expected result, and traceability to functional requirements.
+The following table defines the original 50 core test cases referenced throughout the project documentation. With Sprint 2/3 additions, the full test suite now contains **1161+ tests** across **54 test suites**. Each test case has a unique ID, description, type, component under test, expected result, and traceability to functional requirements.
 
 | Test ID | Description | Type | Component | Expected Result | Traceability |
 |---------|------------|------|-----------|----------------|--------------|
@@ -168,10 +197,10 @@ The following table defines all 50 test cases referenced throughout the project 
 
 | Metric | Target | Enforcement |
 |--------|--------|-------------|
-| Line Coverage | 80% | jest.config.js coverageThresholds; CI fails below threshold |
-| Branch Coverage | 70% | jest.config.js coverageThresholds; CI fails below threshold |
-| Function Coverage | 80% | jest.config.js coverageThresholds; CI fails below threshold |
-| Statement Coverage | 80% | jest.config.js coverageThresholds; CI fails below threshold |
+| Line Coverage | 95%+ | jest.config.js coverageThresholds; CI fails below threshold |
+| Branch Coverage | 95%+ | jest.config.js coverageThresholds; CI fails below threshold |
+| Function Coverage | 95%+ | jest.config.js coverageThresholds; CI fails below threshold |
+| Statement Coverage | 95%+ | jest.config.js coverageThresholds; CI fails below threshold |
 
 Coverage is collected from all files in `src/` except `src/servicenow/` (ServiceNow client scripts require a ServiceNow runtime and are tested separately).
 
@@ -271,10 +300,10 @@ module.exports = {
   ],
   coverageThreshold: {
     global: {
-      lines: 80,
-      branches: 70,
-      functions: 80,
-      statements: 80
+      lines: 95,
+      branches: 95,
+      functions: 95,
+      statements: 95
     }
   },
   coverageReporters: ['text', 'lcov', 'clover'],

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workflow xmlns="http://vmware.com/vco/workflow"
+         id="com.dfw.automation.rule-review"
+         version="2.0.0"
+         api-version="6.0.0">
+  <display-name>DFW - Rule Review</display-name>
+  <description>
+    Scheduled rule review workflow that identifies DFW rules approaching or past
+    their review date. Generates review notifications for rule owners, flags
+    expired rules for deactivation, and produces a governance compliance report.
+
+    Triggered by: vRO scheduled task (weekly) or ServiceNow scheduled job.
+    Orchestrator: RuleReviewScheduler
+  </description>
+
+  <position x="50" y="50"/>
+
+  <input>
+    <param name="site" type="string"/>
+    <param name="lookAheadDays" type="number"/>
+    <param name="autoDeactivateExpired" type="boolean"/>
+  </input>
+
+  <output>
+    <param name="reviewReport" type="string"/>
+    <param name="reviewDueCount" type="number"/>
+    <param name="expiredCount" type="number"/>
+    <param name="deactivatedCount" type="number"/>
+  </output>
+
+  <attrib name="config" type="Properties" read-only="false"/>
+  <attrib name="ruleRegistry" type="Array/Properties" read-only="false"/>
+
+  <!-- Import via vRO Client or Aria Automation Assembler -->
+  <!-- Action bindings configured during deployment -->
+  <!--
+    Action References:
+      - com.dfw.shared/ConfigLoader
+      - com.dfw.shared/Logger
+      - com.dfw.shared/CorrelationContext
+      - com.dfw.dfw/RuleReviewScheduler
+      - com.dfw.dfw/RuleRegistry
+      - com.dfw.dfw/RuleLifecycleManager
+      - com.dfw.adapters/NsxApiAdapter
+      - com.dfw.adapters/SnowPayloadAdapter
+  -->
+</workflow>
