@@ -15,126 +15,81 @@ sequenceDiagram
     participant DLQ as Dead Letter Queue
 
     SNOW->>vRO: POST /trigger (DayN payload)
-    Note over SNOW,vRO: requestType=dayn-decommission vmId, site
-
     vRO->>vRO: Generate correlationId
     vRO->>VAL: validate(payload)
-    VAL->>VAL: Schema validation
-    VAL->>VAL: Verify vmId exists in inventory
-    VAL->>VAL: Verify VM is powered off or decommission is authorized
+    VAL->>VAL: Schema + vmId exists + power-off check
     VAL-->>vRO: Validation passed
-
     vRO->>SAGA: begin(correlationId)
-    SAGA-->>vRO: Saga journal initialized
 
     rect rgb(230, 245, 255)
-        Note over vRO,NSX: Step 1 — Capture Current State
-        vRO->>CB: execute(getCurrentTags)
-        CB->>VC: GET /rest/com/vmware/cis/tagging/tag-association?vm={id}
+        Note over vRO,NSX: Step 1 -- Capture Current State
+        vRO->>CB: getCurrentTags + getGroupMembership
+        CB->>VC: GET tag-association(vm)
         VC-->>CB: currentTags[]
-        CB-->>vRO: currentTags (snapshot for rollback)
-
-        vRO->>CB: execute(getGroupMembership)
-        CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
+        CB->>NSX: GET groups by member
         NSX-->>CB: currentGroups[]
-        CB-->>vRO: currentGroups (snapshot)
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 2 — Dependency Analysis
-        vRO->>vRO: checkDependencies(vmId, site)
-
+        Note over vRO,NSX: Step 2 -- Dependency Analysis
         loop For each group in currentGroups
             vRO->>CB: execute(getGroupMembers)
-            CB->>NSX: GET /policy/api/v1/infra/domains/default/groups/{groupId}/members/virtual-machines
-            NSX-->>CB: memberCount
-            CB-->>vRO: memberCount
-
-            alt memberCount == 1 (this is the last VM)
-                vRO->>DFW: checkOrphanedRules(groupId, site)
-                DFW->>CB: execute(getRulesForGroup)
-                CB->>NSX: GET /policy/api/v1/search?query=resource_type:Rule AND source_groups:{groupId}
-                NSX-->>CB: rules referencing this group
-                CB-->>DFW: rules[]
-                DFW-->>vRO: orphanedRules[] (if any)
-                Note over vRO: Log warning DFW-7007 if rules will become orphaned after removal
+            CB->>NSX: GET group members
+            alt memberCount == 1 (last VM in group)
+                vRO->>DFW: checkOrphanedRules(groupId)
+                DFW->>NSX: GET rules referencing group
+                DFW-->>vRO: orphanedRules[]
             end
         end
-
-        vRO->>vRO: Generate dependency report
-        Note over vRO: Report: groupsAffected, orphanRisk, safe to proceed
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,VC: Step 3 — Remove All Tags
+        Note over vRO,VC: Step 3 -- Remove All Tags
         vRO->>CB: execute(removeTags)
-        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association (detach all tags from VM)
-        VC-->>CB: 200 OK — Tags removed
-        CB-->>vRO: Tags removed
-        vRO->>SAGA: recordStep("removeTags", compensate=reApplyTags(vm-123, snapshot))
+        CB->>VC: PATCH tag-association (detach all tags)
+        VC-->>CB: 200 OK -- Tags removed
+        vRO->>SAGA: recordStep("removeTags", compensate=reApplyTags)
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 4 — Verify Tag Removal Propagation
-        loop Poll NSX tag removal (10s interval, 60s max)
+        Note over vRO,NSX: Step 4 -- Verify Tag Removal Propagation
+        loop Poll NSX tags (10s interval, 60s max)
             vRO->>CB: execute(getNsxTags)
-            CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
-            NSX-->>CB: VM record with tags
-            CB-->>vRO: NSX tags
+            CB->>NSX: GET fabric VM tags
             vRO->>vRO: Confirm all tags removed from NSX
         end
-        Note over vRO: Tags fully removed from NSX
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 5 — Verify Group Membership Drain
+        Note over vRO,NSX: Steps 5-6 -- Verify Group Drain + DFW Detachment
         vRO->>CB: execute(getGroupMembership)
-        CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
-        NSX-->>CB: groups[]
-        CB-->>vRO: groups (should be empty)
-        vRO->>vRO: Confirm VM removed from all dynamic security groups
-    end
-
-    rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 6 — Verify DFW Rule Detachment
+        CB->>NSX: GET groups by member
+        vRO->>vRO: Confirm VM removed from all security groups
         vRO->>CB: execute(getEffectiveRules)
-        CB->>NSX: GET /policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines/{id}/rules
-        NSX-->>CB: Effective DFW rules
-        CB-->>vRO: rules[] (should be minimal/default only)
-        vRO->>vRO: Confirm no application or environment rules remain
+        CB->>NSX: GET effective DFW rules for VM
+        vRO->>vRO: Confirm no app or env rules remain
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,VC: Step 7 — Deprovision VM
+        Note over vRO,VC: Step 7 -- Deprovision VM (final, not reversible)
         vRO->>CB: execute(deleteVM)
-        CB->>VC: DELETE /rest/vcenter/vm/{id}
-        VC-->>CB: 200 OK — VM deleted
-        CB-->>vRO: VM deleted
-        Note over vRO: No saga step recorded — VM deletion is final and not automatically reversible
+        CB->>VC: DELETE VM
+        VC-->>CB: 200 OK -- VM deleted
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,SNOW: Step 8 — Success Callback
-        vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=SUCCESS, vmId, tagsRemoved, groupsRemoved, orphanedRulesWarning
-        SNOW->>SNOW: Update RITM to Closed Complete
-        SNOW->>SNOW: Update CMDB CI status: Decommissioned
+        Note over vRO,SNOW: Step 8 -- Success Callback
+        vRO->>SNOW: POST callback (SUCCESS, tags removed, groups removed)
+        SNOW->>SNOW: Close RITM + mark CMDB CI Decommissioned
     end
 
     rect rgb(255, 230, 230)
-        Note over vRO,DLQ: Error Path — Restore Tags
-        Note over vRO: If tag removal or verification fails:
+        Note over vRO,DLQ: Error Path -- Restore Tags
         vRO->>SAGA: compensate()
-        SAGA->>CB: reApplyTags(vm-123, snapshot) [LIFO]
+        SAGA->>CB: reApplyTags(snapshot) [LIFO]
         CB->>VC: PATCH tags (restore all tags)
-        VC-->>CB: Tags restored
-        SAGA-->>vRO: compensationResult
-
-        vRO->>DLQ: enqueue(payload, error, completedSteps)
-        DLQ-->>vRO: DLQ-entry-id
-
-        vRO->>SNOW: POST /api/x_dfw/callback (FAILURE)
-        Note over SNOW: VM preserved — tags restored, manual intervention required
+        vRO->>DLQ: enqueue(payload, error)
+        vRO->>SNOW: POST callback (FAILURE, manual intervention required)
     end
 ```
 

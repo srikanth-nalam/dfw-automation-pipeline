@@ -38,8 +38,6 @@ classDiagram
         Management
         maps to SG-Zone-DMZ
         maps to SG-Zone-Internal
-        maps to SG-Zone-Restricted
-        maps to SG-Zone-Management
     }
 
     class EnvironmentScope {
@@ -60,7 +58,6 @@ classDiagram
         APP002
         APP003
         maps to SG-App-APP001
-        maps to SG-App-APP002
     }
 
     class SystemRoleScope {

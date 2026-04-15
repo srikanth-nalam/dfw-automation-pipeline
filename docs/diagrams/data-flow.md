@@ -59,8 +59,8 @@ flowchart LR
 
     %% Orchestration to VMware
     TAGGER -->|"VAPI: attach/detach tag associations"| VC_TAGS
-    VC_TAGS -->|"Auto-propagation (vCenter → NSX sync)"| NSX_TAGS
-    NSX_TAGS -->|"Criteria evaluation (tag match → group add)"| GROUPS
+    VC_TAGS -->|"Auto-propagation (vCenter -> NSX sync)"| NSX_TAGS
+    NSX_TAGS -->|"Criteria evaluation (tag match -> group add)"| GROUPS
     GROUPS -->|"Rule binding (source/dest group match)"| DFW
     DFW -->|"Rule realization (pushed to hosts)"| ESXI
     POLICY_REPO -->|"Schema-validated YAML (CI pipeline)"| DFW

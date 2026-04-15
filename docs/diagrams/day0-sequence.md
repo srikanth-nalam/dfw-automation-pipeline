@@ -15,111 +15,80 @@ sequenceDiagram
     participant DLQ as Dead Letter Queue
 
     SNOW->>vRO: POST /trigger (Day0 payload)
-    Note over SNOW,vRO: TLS 1.2+ / X-Correlation-ID header
-
-    vRO->>vRO: Generate correlationId (RITM-{number}-{epoch})
+    vRO->>vRO: Generate correlationId
     vRO->>VAL: validate(payload)
-    VAL->>VAL: Schema validation (ajv)
-    VAL->>VAL: Business rule checks (mandatory tags, valid site)
+    VAL->>VAL: Schema + business rule checks
     VAL-->>vRO: Validation passed
-
     vRO->>SAGA: begin(correlationId)
-    SAGA-->>vRO: Saga journal initialized
 
     rect rgb(230, 245, 255)
-        Note over vRO,VC: Step 1 — VM Provisioning
+        Note over vRO,VC: Step 1 -- VM Provisioning
         vRO->>CB: execute(provisionVM)
-        CB->>VC: POST /rest/vcenter/vm (provision VM)
-        VC-->>CB: 201 Created — vmId: vm-123
-        CB-->>vRO: vmId: vm-123
-        vRO->>SAGA: recordStep("provisionVM", compensate=deleteVM(vm-123))
+        CB->>VC: POST /rest/vcenter/vm
+        VC-->>CB: 201 Created -- vm-123
+        vRO->>SAGA: recordStep("provisionVM", compensate=deleteVM)
     end
 
     rect rgb(230, 245, 255)
-        Note over vRO,VC: Step 2 — Wait for VMware Tools
-        loop Poll VMware Tools (5s interval, 300s max)
+        Note over vRO,VC: Step 2 -- Wait for VMware Tools
+        loop Poll Tools (5s interval, 300s max)
             vRO->>CB: execute(getToolsStatus)
-            CB->>VC: GET /rest/vcenter/vm/{id}/tools
+            CB->>VC: GET vm tools status
             VC-->>CB: toolsRunningStatus
-            CB-->>vRO: status
         end
-        Note over vRO: Tools running — proceed
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,NSX: Step 3 — Apply Tags
+        Note over vRO,NSX: Step 3 -- Apply Tags
         vRO->>TCE: enforceCardinality(current=[], desired=tags)
-        TCE->>TCE: Validate single-value categories (Application, Tier, Environment, etc.)
-        TCE->>TCE: Check conflict rules (PCI+Sandbox, HIPAA+Sandbox, etc.)
+        TCE->>TCE: Validate categories + conflict rules
         TCE-->>vRO: Validated tag set
-
-        vRO->>CB: execute(getCurrentTags)
-        CB->>VC: GET /rest/com/vmware/cis/tagging/tag-association?vm={id}
-        VC-->>CB: currentTags (empty for new VM)
-        CB-->>vRO: currentTags=[]
-
         vRO->>CB: execute(applyTags)
-        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association (attach tags)
-        VC-->>CB: 200 OK — Tags applied
-        CB-->>vRO: Tags applied
-        vRO->>SAGA: recordStep("applyTags", compensate=removeTags(vm-123, categories))
+        CB->>VC: PATCH tag-association (attach tags)
+        VC-->>CB: 200 OK -- Tags applied
+        vRO->>SAGA: recordStep("applyTags", compensate=removeTags)
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 4 — Verify Tag Propagation to NSX
-        loop Poll NSX tag propagation (10s interval, 60s max)
+        Note over vRO,NSX: Step 4 -- Verify Tag Propagation to NSX
+        loop Poll NSX tags (10s interval, 60s max)
             vRO->>CB: execute(getNsxTags)
-            CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
-            NSX-->>CB: VM record with tags
-            CB-->>vRO: NSX tags
-            vRO->>vRO: Compare vCenter tags ↔ NSX tags
+            CB->>NSX: GET fabric VM tags
+            vRO->>vRO: Compare vCenter vs NSX tags
         end
-        Note over vRO: Tags propagated — all match
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 5 — Verify Group Membership
+        Note over vRO,NSX: Step 5 -- Verify Group Membership
         vRO->>CB: execute(getGroupMembership)
-        CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
-        NSX-->>CB: Security group list
-        CB-->>vRO: groups[]
-        vRO->>vRO: Validate expected groups match actual groups
+        CB->>NSX: GET groups by member
+        vRO->>vRO: Validate expected vs actual groups
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 6 — Validate DFW Coverage
+        Note over vRO,NSX: Step 6 -- Validate DFW Coverage
         vRO->>CB: execute(getEffectiveRules)
-        CB->>NSX: GET /policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines/{id}/rules
-        NSX-->>CB: Effective DFW rules
-        CB-->>vRO: rules[]
-        vRO->>vRO: Confirm Infrastructure + Environment rules present
+        CB->>NSX: GET effective DFW rules for VM
+        NSX-->>CB: rules[]
+        vRO->>vRO: Confirm Infra + Env rules present
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,SNOW: Step 7 — Success Callback
-        vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=SUCCESS, vmId, tags, groups, dfwRuleCount
-        SNOW->>SNOW: Update RITM to Closed Complete
-        SNOW->>SNOW: Create/update CMDB CI record
+        Note over vRO,SNOW: Step 7 -- Success Callback
+        vRO->>SNOW: POST callback (SUCCESS, vmId, tags, groups)
+        SNOW->>SNOW: Close RITM + update CMDB CI
     end
 
     rect rgb(255, 230, 230)
-        Note over vRO,DLQ: Error Path — Saga Compensation
-        Note over vRO: If any step fails after retries exhausted:
+        Note over vRO,DLQ: Error Path -- Saga Compensation
         vRO->>SAGA: compensate()
-        SAGA->>CB: removeTags(vm-123) [LIFO step 2]
+        SAGA->>CB: removeTags [LIFO step 2]
         CB->>VC: DELETE tags
-        VC-->>CB: Tags removed
-        SAGA->>CB: deleteVM(vm-123) [LIFO step 1]
-        CB->>VC: DELETE /rest/vcenter/vm/{id}
-        VC-->>CB: VM deleted
-        SAGA-->>vRO: compensationResult{succeeded:2, failed:0}
-
-        vRO->>DLQ: enqueue(payload, error, completedSteps)
-        DLQ-->>vRO: DLQ-entry-id
-
-        vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=FAILURE, error.code, compensationResult
+        SAGA->>CB: deleteVM [LIFO step 1]
+        CB->>VC: DELETE VM
+        SAGA-->>vRO: compensationResult
+        vRO->>DLQ: enqueue(payload, error)
+        vRO->>SNOW: POST callback (FAILURE)
         SNOW->>SNOW: Update RITM to Failed
     end
 ```

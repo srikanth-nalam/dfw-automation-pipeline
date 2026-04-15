@@ -2,6 +2,8 @@
 
 This diagram shows the physical and logical deployment topology of the NSX DFW Automation Pipeline across the ServiceNow cloud instance, the two data center sites (NDCNG and TULNG), the NSX-T Federation layer, and the monitoring infrastructure. It includes network connectivity, protocols, and failover relationships.
 
+### NDCNG Data Center Topology
+
 ```mermaid
 flowchart TB
     subgraph SNOW_CLOUD["ServiceNow Cloud Instance"]
@@ -51,6 +53,46 @@ flowchart TB
         vRO_N2 -->|REST / TLS 1.2| NSX_N_VIP
         NSX_N_VIP -->|DFW Rule Push| ESXi_N1
         VC_N -->|Tag Propagation| NSX_N_VIP
+    end
+
+    subgraph FEDERATION["NSX-T Federation"]
+        NSX_GM_A["Global Manager\nACTIVE\nnsx-gm-active.corp.local"]
+        NSX_GM_S["Global Manager\nSTANDBY\nnsx-gm-standby.corp.local"]
+        NSX_GM_A <-->|Replication| NSX_GM_S
+    end
+
+    subgraph MONITORING["Monitoring Infrastructure"]
+        SPLUNK["Splunk Indexer\nindex=dfw_pipeline"]
+        PAGERDUTY["PagerDuty\nAlerting / On-Call"]
+        DASHBOARD["Splunk Dashboard\nCircuit Breaker / Throughput\nError Rate / Latency / DLQ"]
+        SPLUNK --> DASHBOARD
+        SPLUNK --> PAGERDUTY
+    end
+
+    %% ServiceNow to NDCNG vRO
+    SNOW_APP -->|"REST POST /trigger TLS 1.2+ mTLS"| vRO_N_LB
+
+    %% vRO callback to ServiceNow
+    vRO_N_LB -.->|"POST /callback TLS 1.2+"| SNOW_REST
+
+    %% NSX Federation sync
+    NSX_N_VIP <-->|"Federation Sync Inter-site Link"| NSX_GM_A
+
+    %% vRO to Global Manager
+    vRO_N_LB -->|"REST / TLS 1.2 Global Policy API"| NSX_GM_A
+
+    %% Logging
+    vRO_N_LB -.->|Syslog / HEC| SPLUNK
+```
+
+### TULNG Data Center Topology
+
+```mermaid
+flowchart TB
+    subgraph SNOW_CLOUD["ServiceNow Cloud Instance"]
+        direction TB
+        SNOW_APP["ServiceNow Zurich P6\nProduction Instance"]
+        SNOW_REST["Scripted REST API\n/api/x_dfw/callback"]
     end
 
     subgraph TULNG_SITE["TULNG Data Center"]
@@ -103,24 +145,19 @@ flowchart TB
         SPLUNK --> PAGERDUTY
     end
 
-    %% ServiceNow to vRO (both sites)
-    SNOW_APP -->|"REST POST /trigger TLS 1.2+ / mTLS"| vRO_N_LB
-    SNOW_APP -->|"REST POST /trigger TLS 1.2+ / mTLS"| vRO_T_LB
+    %% ServiceNow to TULNG vRO
+    SNOW_APP -->|"REST POST /trigger TLS 1.2+ mTLS"| vRO_T_LB
 
-    %% vRO callbacks to ServiceNow
-    vRO_N_LB -.->|"POST /callback TLS 1.2+"| SNOW_REST
+    %% vRO callback to ServiceNow
     vRO_T_LB -.->|"POST /callback TLS 1.2+"| SNOW_REST
 
     %% NSX Federation sync
-    NSX_N_VIP <-->|"Federation Sync Inter-site Link"| NSX_GM_A
     NSX_T_VIP <-->|"Federation Sync Inter-site Link"| NSX_GM_A
 
     %% vRO to Global Manager
-    vRO_N_LB -->|"REST / TLS 1.2 Global Policy API"| NSX_GM_A
     vRO_T_LB -->|"REST / TLS 1.2 Global Policy API"| NSX_GM_A
 
     %% Logging
-    vRO_N_LB -.->|Syslog / HEC| SPLUNK
     vRO_T_LB -.->|Syslog / HEC| SPLUNK
 ```
 

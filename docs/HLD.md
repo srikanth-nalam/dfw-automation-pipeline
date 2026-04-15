@@ -41,7 +41,7 @@ Each operation is orchestrated as a distributed saga -- a series of compensable 
 ```mermaid
 graph TB
     subgraph External ["External Systems"]
-        SNOW["ServiceNow\nCatalog & ITSM"]
+        SNOW["ServiceNow\nCatalog and ITSM"]
     end
 
     subgraph Orchestration ["Orchestration Layer"]
@@ -300,7 +300,7 @@ The complete data flow from business request to realized security policy travers
 
 ```mermaid
 flowchart TB
-    A["Tag Dictionary\nAuthorized categories & values"] --> B["ServiceNow Catalog Form\nDropdown population from dictionary"]
+    A["Tag Dictionary\nAuthorized categories and values"] --> B["ServiceNow Catalog Form\nDropdown population from dictionary"]
     B --> C["User submits request\nSelects tags per VM requirements"]
     C --> D["Client Script validates\nMandatory fields, conflict checks,\ncardinality pre-validation"]
     D --> E["Server Script validates\nTag dictionary lookup, business rules,\napproval chain verification"]
@@ -827,7 +827,7 @@ graph LR
         SPLUNK["Splunk / ELK\nCentralized log store"]
     end
 
-    subgraph Monitoring ["Monitoring & Alerting"]
+    subgraph Monitoring ["Monitoring and Alerting"]
         DASH["Operations Dashboard\nGrafana / Splunk Dashboard"]
         ALERTS["Alert Rules\nThreshold-based triggers"]
     end

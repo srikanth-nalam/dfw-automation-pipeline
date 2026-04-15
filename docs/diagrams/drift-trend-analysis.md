@@ -15,7 +15,7 @@ sequenceDiagram
     Sched->>DDW: triggerDriftScan()
 
     rect rgb(230, 245, 255)
-        Note over DDW,NSX: Phase 1 — Run Drift Scan
+        Note over DDW,NSX: Phase 1 -- Run Drift Scan
         DDW->>DDW: runDriftScan(scanConfig)
         DDW->>NSX: GET /api/v1/fabric/virtual-machines
         NSX-->>DDW: VM inventory with current tags
@@ -26,13 +26,13 @@ sequenceDiagram
     end
 
     rect rgb(230, 255, 230)
-        Note over DDW: Phase 2 — Store Scan History
+        Note over DDW: Phase 2 -- Store Scan History
         DDW->>DDW: storeScanHistory(scanResult)
         Note over DDW: Persists scan timestamp,\ntotal VMs scanned,\ndrifted VM count,\nand per-VM drift details
     end
 
     rect rgb(255, 250, 230)
-        Note over DDW: Phase 3 — Analyze Drift Trend
+        Note over DDW: Phase 3 -- Analyze Drift Trend
         DDW->>DDW: analyzeDriftTrend(currentScan)
         DDW->>DDW: Retrieve previous scan results\nfrom scan history
         DDW->>DDW: Compare drift counts\nacross scan windows
@@ -46,11 +46,11 @@ sequenceDiagram
     end
 
     rect rgb(230, 245, 255)
-        Note over DDW,SNOW: Phase 4 — Generate and Deliver Report
+        Note over DDW,SNOW: Phase 4 -- Generate and Deliver Report
         DDW->>DDW: generateDriftSummary(\ncurrentScan, trend)
         Note over DDW: Executive report includes:\ntotal VMs scanned,\ndrift percentage,\ntrend direction,\ntop drifted applications,\nremediation recommendations
         DDW->>SNOW: POST /api/now/table/u_drift_report\n(driftSummary)
-        SNOW-->>DDW: 201 Created — Report ID
+        SNOW-->>DDW: 201 Created -- Report ID
         DDW->>SNOW: Update dashboard widget\n(trend chart data,\ncurrent drift metrics)
         SNOW-->>DDW: Dashboard updated
     end
