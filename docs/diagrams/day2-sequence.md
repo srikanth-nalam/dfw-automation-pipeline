@@ -15,121 +15,81 @@ sequenceDiagram
     participant DLQ as Dead Letter Queue
 
     SNOW->>vRO: POST /trigger (Day2 payload)
-    Note over SNOW,vRO: requestType=day2-update vmId, site, newTags{}
-
     vRO->>vRO: Generate correlationId
     vRO->>VAL: validate(payload)
-    VAL->>VAL: Schema + business rule checks
-    VAL->>VAL: Verify vmId exists in inventory
+    VAL->>VAL: Schema + business rules + vmId exists
     VAL-->>vRO: Validation passed
-
     vRO->>SAGA: begin(correlationId)
-    SAGA-->>vRO: Saga journal initialized
 
     rect rgb(230, 245, 255)
-        Note over vRO,NSX: Step 1 — Read Current State (Snapshot)
+        Note over vRO,NSX: Step 1 -- Read Current State (Snapshot)
         vRO->>CB: execute(getCurrentTags)
-        CB->>VC: GET /rest/com/vmware/cis/tagging/tag-association?vm={id}
+        CB->>VC: GET tag-association(vm)
         VC-->>CB: currentVcTags[]
-        CB-->>vRO: currentVcTags
-
         vRO->>CB: execute(getNsxTags)
-        CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
-        NSX-->>CB: currentNsxTags[]
-        CB-->>vRO: currentNsxTags
-
+        CB->>NSX: GET fabric VM tags
         vRO->>CB: execute(getGroupMembership)
-        CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
-        NSX-->>CB: currentGroups[]
-        CB-->>vRO: currentGroups (pre-change snapshot)
+        CB->>NSX: GET groups by member
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,TCE: Step 2 — Impact Analysis
+        Note over vRO,TCE: Step 2 -- Impact Analysis
         vRO->>TCE: enforceCardinality(currentVcTags, newTags)
-        TCE->>TCE: Validate single-value categories (no duplicate Environment, Tier, etc.)
-        TCE->>TCE: Check conflict rules (PCI+Sandbox, HIPAA+Sandbox)
-        TCE->>TCE: Validate "None" mutual exclusivity in Compliance category
+        TCE->>TCE: Validate categories + conflict rules
         TCE-->>vRO: Validated merged tag set
-
         vRO->>vRO: computeDelta(currentVcTags, mergedTags)
-        Note over vRO: Delta: {add: [...], remove: [...], unchanged: [...]}
-
         vRO->>vRO: Predict group membership changes
-        Note over vRO: Compare tag-based group criteria against new tag set to predict groups to be added/removed
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,VC: Step 3 — Apply Tag Deltas (Read-Compare-Write)
-        vRO->>CB: execute(getCurrentTags) [re-read for freshness]
-        CB->>VC: GET /rest/com/vmware/cis/tagging/tag-association?vm={id}
-        VC-->>CB: freshTags[]
-        CB-->>vRO: freshTags
-
-        vRO->>vRO: Compare freshTags with original snapshot
-        Note over vRO: If tags changed since snapshot, recompute delta to avoid conflicts
-
+        Note over vRO,VC: Step 3 -- Apply Tag Deltas (Read-Compare-Write)
+        vRO->>CB: re-read getCurrentTags for freshness
+        CB->>VC: GET tag-association(vm)
+        vRO->>vRO: Compare freshTags with snapshot, recompute if changed
         vRO->>CB: execute(updateTags)
-        CB->>VC: PATCH /rest/com/vmware/cis/tagging/tag-association (detach removed, attach added)
-        VC-->>CB: 200 OK — Tags updated
-        CB-->>vRO: Tags updated
-        vRO->>SAGA: recordStep("applyTagDeltas", compensate=revertTags(vm-123, snapshot))
+        CB->>VC: PATCH tag-association (detach removed, attach added)
+        VC-->>CB: 200 OK -- Tags updated
+        vRO->>SAGA: recordStep("applyTagDeltas", compensate=revertTags)
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 4 — Verify Tag Propagation
-        loop Poll NSX tag propagation (10s interval, 60s max)
+        Note over vRO,NSX: Step 4 -- Verify Tag Propagation
+        loop Poll NSX tags (10s interval, 60s max)
             vRO->>CB: execute(getNsxTags)
-            CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
-            NSX-->>CB: VM record with updated tags
-            CB-->>vRO: NSX tags
-            vRO->>vRO: Compare expected tags ↔ NSX tags
+            CB->>NSX: GET fabric VM tags
+            vRO->>vRO: Compare expected vs NSX tags
         end
-        Note over vRO: All tags propagated to NSX
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 5 — Verify Group Membership Changes
+        Note over vRO,NSX: Step 5 -- Verify Group Membership Changes
         vRO->>CB: execute(getGroupMembership)
-        CB->>NSX: GET /policy/api/v1/infra/domains/default/groups?member_id={id}
-        NSX-->>CB: updatedGroups[]
-        CB-->>vRO: updatedGroups
-
-        vRO->>vRO: Compare predicted groups ↔ actual groups
-        Note over vRO: Verify VM was added to expected new groups and removed from groups no longer matching
+        CB->>NSX: GET groups by member
+        vRO->>vRO: Compare predicted vs actual groups
     end
 
     rect rgb(255, 250, 230)
-        Note over vRO,NSX: Step 6 — Validate DFW Coverage
+        Note over vRO,NSX: Step 6 -- Validate DFW Coverage
         vRO->>CB: execute(getEffectiveRules)
-        CB->>NSX: GET /policy/api/v1/infra/realized-state/enforcement-points/default/virtual-machines/{id}/rules
-        NSX-->>CB: Effective DFW rules
-        CB-->>vRO: rules[]
-        vRO->>vRO: Confirm rule set matches new group membership
+        CB->>NSX: GET effective DFW rules for VM
+        vRO->>vRO: Confirm rules match new group membership
     end
 
     rect rgb(230, 255, 230)
-        Note over vRO,SNOW: Step 7 — Success Callback
-        vRO->>SNOW: POST /api/x_dfw/callback
-        Note over SNOW: Payload: correlationId, status=SUCCESS, vmId, previousTags, newTags, groupsAdded[], groupsRemoved[]
-        SNOW->>SNOW: Update RITM to Closed Complete
-        SNOW->>SNOW: Update CMDB CI tags attribute
+        Note over vRO,SNOW: Step 7 -- Success Callback
+        vRO->>SNOW: POST callback (SUCCESS, tags, groups changed)
+        SNOW->>SNOW: Close RITM + update CMDB CI tags
     end
 
     rect rgb(255, 230, 230)
-        Note over vRO,DLQ: Error Path — Revert Tags
-        Note over vRO: If any step fails after retries exhausted:
+        Note over vRO,DLQ: Error Path -- Revert Tags
         vRO->>SAGA: compensate()
-        SAGA->>CB: revertTags(vm-123, snapshot) [LIFO]
+        SAGA->>CB: revertTags(snapshot) [LIFO]
         CB->>VC: PATCH tags (restore previous state)
-        VC-->>CB: Tags reverted
         SAGA-->>vRO: compensationResult
-
-        vRO->>DLQ: enqueue(payload, error, completedSteps)
-        DLQ-->>vRO: DLQ-entry-id
-
-        vRO->>SNOW: POST /api/x_dfw/callback (FAILURE)
-        SNOW->>SNOW: Update RITM with error + compensation
+        vRO->>DLQ: enqueue(payload, error)
+        vRO->>SNOW: POST callback (FAILURE)
+        SNOW->>SNOW: Update RITM with error
     end
 ```
 

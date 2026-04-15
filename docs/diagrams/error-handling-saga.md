@@ -18,17 +18,15 @@ sequenceDiagram
     Note over O,S: === HAPPY PATH STEPS ===
 
     O->>S: begin(correlationId)
-    S->>LOG: log(INFO, "Saga begun", {correlationId})
     S-->>O: journal initialized (empty)
 
     O->>R: execute(provisionVM, {maxRetries: 3})
     R->>CB: execute(provisionVM)
     CB->>VC: POST /rest/vcenter/vm
-    VC-->>CB: 201 Created — vmId: vm-123
+    VC-->>CB: 201 Created -- vmId: vm-123
     CB-->>R: success
     R-->>O: vmId: vm-123
     O->>S: recordStep("provisionVM", deleteVM(vm-123))
-    S->>LOG: log(INFO, "Step recorded", {step: "provisionVM", index: 0})
 
     O->>R: execute(applyTags, {maxRetries: 3})
     R->>CB: execute(applyTags)
@@ -37,7 +35,6 @@ sequenceDiagram
     CB-->>R: success
     R-->>O: Tags applied
     O->>S: recordStep("applyTags", removeTags(vm-123, categories))
-    S->>LOG: log(INFO, "Step recorded", {step: "applyTags", index: 1})
 
     Note over O,NSX: === FAILURE OCCURS ===
 
@@ -46,19 +43,16 @@ sequenceDiagram
     CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
     NSX--xCB: 504 Gateway Timeout
     CB--xR: timeout error
-    R->>LOG: log(WARN, "Retry 1/3", {operation: "verifyPropagation"})
 
     R->>CB: execute(verifyPropagation) [attempt 2, +5s backoff]
     CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
     NSX--xCB: 504 Gateway Timeout
     CB--xR: timeout error
-    R->>LOG: log(WARN, "Retry 2/3", {operation: "verifyPropagation"})
 
     R->>CB: execute(verifyPropagation) [attempt 3, +15s backoff]
     CB->>NSX: GET /api/v1/fabric/virtual-machines?external_id={id}
     NSX--xCB: 504 Gateway Timeout
-    CB->>CB: failureCount >= threshold, State: CLOSED → OPEN
-    CB->>LOG: log(ERROR, "Circuit breaker OPEN", {endpoint: "nsx-ndcng"})
+    CB->>CB: failureCount >= threshold, State: CLOSED -> OPEN
     CB--xR: DFW-6004 Circuit breaker open
 
     R->>EF: createError("DFW-7004", "Tag propagation sync timeout", {step: "verifyPropagation", retryCount: 3})
@@ -74,12 +68,11 @@ sequenceDiagram
         Note over S,VC: Compensate Step 1 (index 1): Remove Tags
         S->>R: execute(removeTags(vm-123, categories))
         R->>CB: execute(removeTags)
-        Note over CB: Using vCenter circuit breaker\n(separate from NSX — still CLOSED)
+        Note over CB: Using vCenter circuit breaker\n(separate from NSX -- still CLOSED)
         CB->>VC: PATCH /tags (detach all tags)
         VC-->>CB: 200 OK
         CB-->>R: success
         R-->>S: Tags removed
-        S->>LOG: log(INFO, "Compensation succeeded", {step: "applyTags", index: 1})
     end
 
     rect rgb(255, 240, 230)
@@ -90,7 +83,6 @@ sequenceDiagram
         VC-->>CB: 200 OK
         CB-->>R: success
         R-->>S: VM deleted
-        S->>LOG: log(INFO, "Compensation succeeded", {step: "provisionVM", index: 0})
     end
 
     S-->>O: compensationResult: {succeeded: 2, failed: 0, details: [...]}
@@ -99,7 +91,6 @@ sequenceDiagram
 
     O->>DLQ: enqueue({correlationId, operation: "day0-provision", vmId: "vm-123", site: "NDCNG", error: {code: "DFW-7004"}, completedSteps: [...], compensationResult: {succeeded: 2, failed: 0}, retryCount: 3})
     DLQ-->>O: DLQ-entry-id: dlq-456
-    DLQ->>LOG: log(ERROR, "DLQ entry created", {dlqId: "dlq-456", correlationId})
 
     Note over O,SNOW: === ERROR CALLBACK ===
 

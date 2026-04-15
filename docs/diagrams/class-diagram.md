@@ -2,6 +2,12 @@
 
 This diagram shows the complete class hierarchy and relationships for the NSX DFW Automation Pipeline. It includes the abstract LifecycleOrchestrator with its concrete Day0/Day2/DayN implementations, the tag management subsystem, DFW validation components, resilience infrastructure, and shared utilities.
 
+The diagram is split into three sections for readability.
+
+### Core Orchestration Classes
+
+This section covers the abstract LifecycleOrchestrator with its Day0, Day2, and DayN concrete implementations, the SagaCoordinator for distributed transaction compensation, and core validation and error-handling dependencies.
+
 ```mermaid
 classDiagram
     class LifecycleOrchestrator {
@@ -65,6 +71,38 @@ classDiagram
         +timestamp: number
     }
 
+    class PayloadValidator {
+        -schemas: Map~string, Schema~
+        +validate(payload) ValidationResult
+        -validateSchema(payload) void
+        -validateBusinessRules(payload) void
+        -validateTagValues(tags) void
+        -validateSiteCode(site) void
+    }
+
+    %% Inheritance
+    LifecycleOrchestrator <|-- Day0Orchestrator
+    LifecycleOrchestrator <|-- Day2Orchestrator
+    LifecycleOrchestrator <|-- DayNOrchestrator
+
+    %% Composition -- Orchestrator dependencies
+    LifecycleOrchestrator *-- SagaCoordinator : creates per execution
+    LifecycleOrchestrator *-- PayloadValidator : injected
+    LifecycleOrchestrator o-- RestClient : shared
+    LifecycleOrchestrator o-- Logger : shared
+    LifecycleOrchestrator o-- ConfigLoader : shared
+    LifecycleOrchestrator --> ErrorFactory : error creation
+
+    %% Saga internals
+    SagaCoordinator --> SagaStep : journal entries
+```
+
+### Tag Management and DFW Validation
+
+This section covers the tag management subsystem (TagOperations, TagCardinalityEnforcer, CardinalityRule) and the DFW policy validation components (DFWPolicyValidator, RuleConflictDetector). Orchestrator classes are shown minimally to illustrate cross-cutting dependencies.
+
+```mermaid
+classDiagram
     class TagOperations {
         -restClient: RestClient
         -cardinalityEnforcer: TagCardinalityEnforcer
@@ -107,6 +145,31 @@ classDiagram
         +detectDuplicates(rules) DuplicateRule[]
     }
 
+    %% Cross-cutting -- orchestrators that use these subsystems
+    class Day0Orchestrator
+    class Day2Orchestrator
+    class DayNOrchestrator
+
+    %% Tag subsystem
+    Day0Orchestrator --> TagOperations : uses
+    Day2Orchestrator --> TagOperations : uses
+    DayNOrchestrator --> TagOperations : uses
+    TagOperations *-- TagCardinalityEnforcer : composes
+    TagCardinalityEnforcer --> CardinalityRule : references
+
+    %% DFW subsystem
+    Day0Orchestrator --> DFWPolicyValidator : uses
+    Day2Orchestrator --> DFWPolicyValidator : uses
+    DayNOrchestrator --> DFWPolicyValidator : uses
+    DFWPolicyValidator --> RuleConflictDetector : delegates analysis
+```
+
+### Resilience and Infrastructure
+
+This section covers the resilience chain (CircuitBreaker, RetryHandler, RestClient), shared utilities (Logger, ConfigLoader, CorrelationContext), and the ErrorFactory.
+
+```mermaid
+classDiagram
     class CircuitBreaker {
         -state: CLOSED | OPEN | HALF_OPEN
         -failureCount: number
@@ -145,21 +208,6 @@ classDiagram
         -addCorrelationHeader(headers) Headers
     }
 
-    class PayloadValidator {
-        -schemas: Map~string, Schema~
-        +validate(payload) ValidationResult
-        -validateSchema(payload) void
-        -validateBusinessRules(payload) void
-        -validateTagValues(tags) void
-        -validateSiteCode(site) void
-    }
-
-    class ErrorFactory {
-        +create(code, message, context)$ Error
-        +createCallbackPayload(corrId, error, action)$ CallbackPayload
-        -enrichError(error, context)$ Error
-    }
-
     class Logger {
         -correlationId: string
         -step: string
@@ -195,44 +243,19 @@ classDiagram
         +getHeader() object
     }
 
-    %% Inheritance
-    LifecycleOrchestrator <|-- Day0Orchestrator
-    LifecycleOrchestrator <|-- Day2Orchestrator
-    LifecycleOrchestrator <|-- DayNOrchestrator
-
-    %% Composition — Orchestrator dependencies
-    LifecycleOrchestrator *-- SagaCoordinator : creates per execution
-    LifecycleOrchestrator *-- PayloadValidator : injected
-    LifecycleOrchestrator o-- RestClient : shared
-    LifecycleOrchestrator o-- Logger : shared
-    LifecycleOrchestrator o-- ConfigLoader : shared
-
-    %% Tag subsystem
-    Day0Orchestrator --> TagOperations : uses
-    Day2Orchestrator --> TagOperations : uses
-    DayNOrchestrator --> TagOperations : uses
-    TagOperations *-- TagCardinalityEnforcer : composes
-    TagCardinalityEnforcer --> CardinalityRule : references
-
-    %% DFW subsystem
-    Day0Orchestrator --> DFWPolicyValidator : uses
-    Day2Orchestrator --> DFWPolicyValidator : uses
-    DayNOrchestrator --> DFWPolicyValidator : uses
-    DFWPolicyValidator --> RuleConflictDetector : delegates analysis
+    class ErrorFactory {
+        +create(code, message, context)$ Error
+        +createCallbackPayload(corrId, error, action)$ CallbackPayload
+        -enrichError(error, context)$ Error
+    }
 
     %% Resilience chain
     RestClient --> CircuitBreaker : wraps calls
     RestClient --> RetryHandler : wraps calls
-    TagOperations --> RestClient : uses
-    DFWPolicyValidator --> RestClient : uses
-
-    %% Saga internals
-    SagaCoordinator --> SagaStep : journal entries
 
     %% Shared utilities
     RestClient --> CorrelationContext : header injection
     Logger --> CorrelationContext : context enrichment
-    LifecycleOrchestrator --> ErrorFactory : error creation
 ```
 
 ## Design Pattern Mapping

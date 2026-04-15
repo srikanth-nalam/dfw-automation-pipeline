@@ -2,6 +2,12 @@
 
 This diagram shows the complete NSX DFW Automation Pipeline architecture, including the ServiceNow request layer, vRO orchestration engine with all internal components, and the VMware VCF infrastructure across both data center sites with NSX-T Federation.
 
+The architecture is split into two sub-diagrams for readability.
+
+### ServiceNow and vRO Orchestration
+
+This diagram covers the ServiceNow request layer, the vRO orchestration engine with all internal subsystems, and the connections between them.
+
 ```mermaid
 flowchart TB
     subgraph ServiceNow["ServiceNow (Zurich Patch 6)"]
@@ -40,7 +46,7 @@ flowchart TB
             REST_CLIENT["RestClient\nGET / POST / PATCH / DELETE"]
         end
 
-        subgraph ERROR_INFRA["Error & Compensation"]
+        subgraph ERROR_INFRA["Error and Compensation"]
             SAGA["SagaCoordinator\nJournal + LIFO Compensate"]
             DLQ["Dead Letter Queue\nFailed Operations Store"]
             ERR_FACTORY["ErrorFactory\nDFW-XXXX Taxonomy"]
@@ -51,20 +57,6 @@ flowchart TB
             CONFIG["ConfigLoader\nSite Endpoints + Vault Refs"]
             CORR["CorrelationContext\nRITM-{n}-{epoch}"]
         end
-    end
-
-    subgraph VCF["VMware Cloud Foundation"]
-        subgraph NDCNG["NDCNG Data Center"]
-            VC_N["vCenter Server\nNDCNG"]
-            NSX_N["NSX Manager\nNDCNG Cluster"]
-            ESXI_N["ESXi Hosts\nDFW Kernel Modules"]
-        end
-        subgraph TULNG["TULNG Data Center"]
-            VC_T["vCenter Server\nTULNG"]
-            NSX_T["NSX Manager\nTULNG Cluster"]
-            ESXI_T["ESXi Hosts\nDFW Kernel Modules"]
-        end
-        NSX_GM["NSX Federation\nGlobal Manager\nActive / Standby"]
     end
 
     %% ServiceNow internal flow
@@ -103,6 +95,40 @@ flowchart TB
     REST_CLIENT --> CB
     CB --> RETRY
 
+    %% Shared services (dotted)
+    LOGGER -.->|All Components| LIFECYCLE
+    CONFIG -.->|Endpoint Resolution| LIFECYCLE
+    CORR -.->|Correlation ID| LOGGER
+```
+
+### VMware Infrastructure and Cross-System Connections
+
+This diagram covers the VMware Cloud Foundation infrastructure (vCenter, NSX, ESXi) across both data center sites, the NSX Federation Global Manager, and the connections from vRO into the infrastructure and back to ServiceNow.
+
+```mermaid
+flowchart TB
+    %% Re-declare referenced vRO and ServiceNow nodes
+    RETRY["RetryHandler"]
+    DFW_VAL["DFWPolicyValidator"]
+    DAY0["Day0Orchestrator"]
+    DAY2["Day2Orchestrator"]
+    DAYN["DayNOrchestrator"]
+    CALLBACK_EP["Scripted REST Callback Endpoint"]
+
+    subgraph VCF["VMware Cloud Foundation"]
+        subgraph NDCNG["NDCNG Data Center"]
+            VC_N["vCenter Server\nNDCNG"]
+            NSX_N["NSX Manager\nNDCNG Cluster"]
+            ESXI_N["ESXi Hosts\nDFW Kernel Modules"]
+        end
+        subgraph TULNG["TULNG Data Center"]
+            VC_T["vCenter Server\nTULNG"]
+            NSX_T["NSX Manager\nTULNG Cluster"]
+            ESXI_T["ESXi Hosts\nDFW Kernel Modules"]
+        end
+        NSX_GM["NSX Federation\nGlobal Manager\nActive / Standby"]
+    end
+
     %% vRO to VMware infrastructure
     RETRY -->|VAPI| VC_N
     RETRY -->|VAPI| VC_T
@@ -120,11 +146,6 @@ flowchart TB
     DAY0 -->|POST /callback| CALLBACK_EP
     DAY2 -->|POST /callback| CALLBACK_EP
     DAYN -->|POST /callback| CALLBACK_EP
-
-    %% Shared services (dotted)
-    LOGGER -.->|All Components| LIFECYCLE
-    CONFIG -.->|Endpoint Resolution| LIFECYCLE
-    CORR -.->|Correlation ID| LOGGER
 ```
 
 ## Component Summary

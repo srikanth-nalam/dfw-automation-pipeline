@@ -755,6 +755,10 @@ Detects VM rebuild and same-name reuse scenarios before provisioning. Queries vC
 
 ## 2. Class Diagram
 
+#### Core Orchestration Classes
+
+Lifecycle orchestrator hierarchy (abstract base plus Day0, Day2, DayN concrete implementations), saga coordination, and the dead-letter queue.
+
 ```mermaid
 classDiagram
     class LifecycleOrchestrator {
@@ -769,7 +773,6 @@ classDiagram
         #groupVerifier: GroupMembershipVerifier
         #dfwValidator: DFWPolicyValidator
         #snowAdapter: SnowPayloadAdapter
-        #stepDurations: Object
         +run(payload) Promise~Object~
         +validate(payload) Promise~Object~
         +resolveEndpoints(site) Promise~Object~
@@ -837,16 +840,18 @@ classDiagram
         +isActive() boolean
     }
 
-    class DeadLetterQueue {
-        -_store: Map
-        +enqueue(payload, error, id) Promise~string~
-        +dequeue(entryId) Promise~Object~
-        +list() Promise~Array~
-        +inspect(entryId) Promise~Object~
-        +purge(entryId) Promise~void~
-        +getDepth() Promise~number~
-    }
+    LifecycleOrchestrator <|-- Day0Orchestrator
+    LifecycleOrchestrator <|-- Day2Orchestrator
+    LifecycleOrchestrator <|-- DayNOrchestrator
+    LifecycleOrchestrator --> SagaCoordinator
+```
 
+#### Tag and DFW Subsystem Classes
+
+Tag operations, cardinality enforcement, propagation verification, group membership, DFW policy validation, rule conflict detection, and policy deployment.
+
+```mermaid
+classDiagram
     class TagOperations {
         +restClient: Object
         +logger: Logger
@@ -903,6 +908,28 @@ classDiagram
         +validate(policyDef) Object
     }
 
+    class Day0Orchestrator { }
+    class Day2Orchestrator { }
+    class DayNOrchestrator { }
+
+    TagOperations --> TagCardinalityEnforcer
+    DFWPolicyValidator --> RuleConflictDetector
+    Day0Orchestrator --> TagOperations
+    Day0Orchestrator --> GroupMembershipVerifier
+    Day0Orchestrator --> DFWPolicyValidator
+    Day2Orchestrator --> TagOperations
+    Day2Orchestrator --> GroupMembershipVerifier
+    Day2Orchestrator --> DFWPolicyValidator
+    DayNOrchestrator --> TagOperations
+    DayNOrchestrator --> DFWPolicyValidator
+```
+
+#### Resilience Infrastructure Classes
+
+Circuit breaker, retry handling, REST client, and the API adapter classes that depend on them.
+
+```mermaid
+classDiagram
     class CircuitBreaker {
         -_name: string
         -_failureThreshold: number
@@ -933,55 +960,6 @@ classDiagram
         +execute(fn, options) Promise~any~
     }
 
-    class ConfigLoader {
-        +getEndpointsForSite(site) Object
-        +getConfig(key) any
-        +resolveVaultReference(ref) string
-    }
-
-    class Logger {
-        -_step: string
-        -_minLevel: string
-        -_correlationId: string
-        +info(msg, meta) void
-        +warn(msg, meta) void
-        +error(msg, meta) void
-        +debug(msg, meta) void
-        +setCorrelationId(id) void
-    }
-
-    class CorrelationContext {
-        +generate(ritmNumber) string
-        +set(correlationId) void
-        +get() string
-        +getHeaders() Object
-    }
-
-    class ErrorFactory {
-        +createError(code, msg, step, retry, details)$ DfwError
-        +createCallbackPayload(id, error, action)$ Object
-        +isRetryable(code)$ boolean
-        +getTaxonomy(code)$ Object
-        +getAllCodes()$ Array
-        +getCodesByCategory(cat)$ Array
-    }
-
-    class DfwError {
-        +code: string
-        +category: string
-        +httpStatus: number
-        +failedStep: string
-        +retryCount: number
-        +details: any
-        +timestamp: string
-        +toJSON() Object
-    }
-
-    class PayloadValidator {
-        +validate(payload) Object
-        +validateCallback(payload) Object
-    }
-
     class RestClient {
         +get(url, options) Promise
         +post(url, body, options) Promise
@@ -1006,39 +984,95 @@ classDiagram
         +powerAction(vmId, action, site) Promise
     }
 
+    RestClient --> CircuitBreaker
+    RestClient --> RetryHandler
+    TagOperations *-- RestClient
+    NsxApiAdapter --> RestClient
+    VcenterApiAdapter --> RestClient
+```
+
+#### Shared Services Classes
+
+Payload validation, error handling, logging, configuration loading, correlation tracking, and the ServiceNow payload adapter.
+
+```mermaid
+classDiagram
+    class PayloadValidator {
+        +validate(payload) Object
+        +validateCallback(payload) Object
+    }
+
+    class ErrorFactory {
+        +createError(code, msg, step, retry, details)$ DfwError
+        +createCallbackPayload(id, error, action)$ Object
+        +isRetryable(code)$ boolean
+        +getTaxonomy(code)$ Object
+        +getAllCodes()$ Array
+        +getCodesByCategory(cat)$ Array
+    }
+
+    class DfwError {
+        +code: string
+        +category: string
+        +httpStatus: number
+        +failedStep: string
+        +retryCount: number
+        +details: any
+        +timestamp: string
+        +toJSON() Object
+    }
+
+    class Logger {
+        -_step: string
+        -_minLevel: string
+        -_correlationId: string
+        +info(msg, meta) void
+        +warn(msg, meta) void
+        +error(msg, meta) void
+        +debug(msg, meta) void
+        +setCorrelationId(id) void
+    }
+
+    class ConfigLoader {
+        +getEndpointsForSite(site) Object
+        +getConfig(key) any
+        +resolveVaultReference(ref) string
+    }
+
+    class CorrelationContext {
+        +generate(ritmNumber) string
+        +set(correlationId) void
+        +get() string
+        +getHeaders() Object
+    }
+
     class SnowPayloadAdapter {
         +normalizeInbound(payload) Object
         +formatCallback(result) Object
         +formatErrorCallback(error, id) Object
     }
 
-    LifecycleOrchestrator <|-- Day0Orchestrator
-    LifecycleOrchestrator <|-- Day2Orchestrator
-    LifecycleOrchestrator <|-- DayNOrchestrator
+    class DeadLetterQueue {
+        -_store: Map
+        +enqueue(payload, error, id) Promise~string~
+        +dequeue(entryId) Promise~Object~
+        +list() Promise~Array~
+        +inspect(entryId) Promise~Object~
+        +purge(entryId) Promise~void~
+        +getDepth() Promise~number~
+    }
 
-    LifecycleOrchestrator --> SagaCoordinator
-    LifecycleOrchestrator --> DeadLetterQueue
-    LifecycleOrchestrator --> TagOperations
-    LifecycleOrchestrator --> GroupMembershipVerifier
-    LifecycleOrchestrator --> DFWPolicyValidator
+    class LifecycleOrchestrator { }
+    class RestClient { }
+
+    ErrorFactory --> DfwError
+    RestClient --> CorrelationContext
     LifecycleOrchestrator --> ConfigLoader
     LifecycleOrchestrator --> Logger
     LifecycleOrchestrator --> PayloadValidator
     LifecycleOrchestrator --> RestClient
     LifecycleOrchestrator --> SnowPayloadAdapter
-
-    TagOperations --> TagCardinalityEnforcer
-    TagOperations *-- RestClient
-
-    RestClient --> CircuitBreaker
-    RestClient --> RetryHandler
-    RestClient --> CorrelationContext
-
-    ErrorFactory --> DfwError
-    DFWPolicyValidator --> RuleConflictDetector
-
-    NsxApiAdapter --> RestClient
-    VcenterApiAdapter --> RestClient
+    LifecycleOrchestrator --> DeadLetterQueue
     SnowPayloadAdapter --> RestClient
 ```
 
@@ -1275,9 +1309,9 @@ sequenceDiagram
 sequenceDiagram
     participant VRO as Orchestrator
     participant Saga as SagaCoordinator
-    participant S1 as Step 1: provisionVM
-    participant S2 as Step 2: applyTags
-    participant S3 as Step 3: waitForPropagation
+    participant S1 as "Step 1: provisionVM"
+    participant S2 as "Step 2: applyTags"
+    participant S3 as "Step 3: waitForPropagation"
     participant DLQ as DeadLetterQueue
     participant SNOW as ServiceNow
 
@@ -1318,9 +1352,9 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Saga as SagaCoordinator
-    participant C3 as Compensate Step 3: removeGroups
-    participant C2 as Compensate Step 2: removeTags
-    participant C1 as Compensate Step 1: deleteVM
+    participant C3 as "Compensate Step 3: removeGroups"
+    participant C2 as "Compensate Step 2: removeTags"
+    participant C1 as "Compensate Step 1: deleteVM"
 
     Note over Saga: Compensating 3 steps in reverse order
 
@@ -1348,7 +1382,7 @@ sequenceDiagram
     participant CB as CircuitBreaker [nsx-manager-ndcng]
     participant API as NSX Manager
 
-    Note over CB: State: CLOSED, failures: 0/5
+    Note over CB: State: CLOSED, failures: 0 of 5
 
     Client->>CB: execute(fn)
     CB->>API: API call
